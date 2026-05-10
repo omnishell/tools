@@ -30,7 +30,7 @@ Run:
 EOF
     }
 
-    g.general() {
+    __g__.general() {
         local cmd="$1"
         shift || true
 
@@ -116,7 +116,7 @@ EOF
                     return $?
                 fi
                 if [ -z "$1" ]; then
-                    g.general info
+                    __g__.general info
                 elif [[ "$1" == "." ]]; then
                     if git add .; then
                         echo "All modified files in \"$PWD\" added to stage."
@@ -146,7 +146,7 @@ EOF
                 while read -r branch; do
                     if [[ "$1" == "$branch" ]]; then g.branch "$branch"; return; fi
                 done < <(git branch --format="%(refname:short)")
-                g.branch new "$1"
+                __g__.branch new "$1"
                 ;;
             ..)
                 if [[ "$1" == "-a" || "$1" == "--all" ]]; then
@@ -159,13 +159,13 @@ EOF
                 fi
                 if [ "$#" -eq 0 ]; then g.stage rm; else g.stage rm "$@"; fi
                 ;;
-            ,.|.,) g.stage ls ;;
+            ,.|.,) __g__.stage ls ;;
             git) git "$@" ;;
             *) echo "Unknown general command: $cmd" >&2; return 1 ;;
         esac
     }
 
-    g.branch() {
+    __g__.branch() {
         local sub="${1:-}"
         shift || true
         case "$sub" in
@@ -290,7 +290,7 @@ EOF
         esac
     }
 
-    g.remote() {
+    __g__.remote() {
         local sub="${1:-}"
         shift || true
         case "$sub" in
@@ -391,7 +391,7 @@ EOF
         esac
     }
 
-    g.stage() {
+    __g__.stage() {
         local sub="${1:-}"
         shift || true
         case "$sub" in
@@ -437,7 +437,7 @@ EOF
         esac
     }
 
-    g.conflict() {
+    __g__.conflict() {
         local sub="${1:-}"
         shift || true
         case "$sub" in
@@ -620,7 +620,7 @@ EOF
         esac
     }
 
-    g.tag() {
+    g.__tag__() {
         local sub="${1:-}"
         local all_args=("$@")
         shift || true
@@ -699,7 +699,7 @@ EOF
         esac
     }
 
-    g.commit() {
+    g.__commit__() {
         local cmd="$1"
         shift || true
         case "$cmd" in
@@ -1310,14 +1310,14 @@ EOF
         local cmd="${1:-}"
         case "$cmd" in
             -h|--help|"") g.__help__ ;;
-            info|undo|apply|.|..|","|",."|".,"|git) g.general "$@" ;;
-            new|list|ls|rm|edit|update|join|send|diff) g.commit "$@" ;;
-            branch) shift; g.branch "$@" ;;
-            tag|tags) shift; g.tag "$@" ;;
-            stage|staged) shift; g.stage "$@" ;;
-            conflict) shift; g.conflict "$@" ;;
-            remote) shift; g.remote "$@" ;;
-            *) g.commit "$@" ;;
+            info|undo|apply|.|..|","|",."|".,"|git) __g__.general "$@" ;;
+            new|list|ls|rm|edit|update|join|send|diff) __g__.commit "$@" ;;
+            branch) shift; __g__.branch "$@" ;;
+            tag|tags) shift; __g__.tag "$@" ;;
+            stage|staged) shift; __g__.stage "$@" ;;
+            conflict) shift; __g__.conflict "$@" ;;
+            remote) shift; __g__.remote "$@" ;;
+            *) __g__.commit "$@" ;;
         esac
     }
 

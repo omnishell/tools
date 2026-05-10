@@ -1,0 +1,1327 @@
+#! /bin/bash
+
+__g__() {
+    g.__help__() {
+        cat <<'EOF' >&2
+Usage: g <command> [options]
+
+Top-level commands:
+  info          Show last commit and status
+  undo          Undo commits or restore paths
+  new           Create a commit
+  ls, list      List recent commits
+  rm            Remove commits (interactive rebase)
+  edit          Edit a past commit on a temp branch
+  rename        Update a commit message
+  join          Squash commits
+  send          Push commits
+  get           Pull commits
+  diff          Show diffs
+
+Command groups:
+  branch        Branch-related commands
+  tag           Tag-related commands
+  stage         Staging area commands
+  conflict      Conflict inspection
+  remote        Remote management
+
+Run:
+  g <group> -h      for group-specific help, e.g. 'g tag -h'
+EOF
+    }
+
+    g.general() {
+        local cmd="$1"
+        shift || true
+
+        case "$cmd" in
+            undo)
+                if [ $# -eq 0 ]; then
+                    echo "Usage: g undo <number>  OR  g undo <path> [<path>...]" >&2
+                    return 1
+                fi
+                if [ $# -eq 1 ] && [[ "$1" =~ ^[0-9]+$ ]]; then
+                    local steps="$1"
+                    local target_ref="HEAD~$steps"
+                    if ! git rev-parse --verify "$target_ref" >/dev/null 2>&1; then
+                        echo "Target commit '$target_ref' does not exist." >&2
+                        return 1
+                    fi
+                    echo "This will run: git reset --hard $target_ref"
+                    read -r -p "Are you sure you want to discard all uncommitted changes and move HEAD back $steps commit(s)? [y/N] " answer
+                    case "$answer" in
+                        [Yy]*) git reset --hard "$target_ref" ;;
+                        *) echo "Aborted."; return 1 ;;
+                    esac
+                else
+                    git restore -- "$@"
+                fi
+                ;;
+            info)
+                git log -1 --oneline
+                git status
+                ;;
+            apply)
+                local delete_temp_branch=0
+                while [ $# -gt 0 ]; do
+                    case "$1" in
+                        -d|--delete) delete_temp_branch=1 ;;
+                        *) echo "Usage: g apply [-d|--delete]" >&2; return 1 ;;
+                    esac
+                    shift
+                done
+                local git_dir
+                git_dir=$(git rev-parse --git-dir 2>/dev/null) || { echo "Not inside a git repository." >&2; return 1; }
+                local state_file="$git_dir/g-edit-state"
+                if [ ! -f "$state_file" ]; then
+                    echo "No pending edit state found. Run 'g edit <hash|number>' first." >&2
+                    return 1
+                fi
+                local original_branch old_commit_hash
+                { read -r original_branch; read -r old_commit_hash; } < "$state_file"
+                if [ -z "$original_branch" ] || [ -z "$old_commit_hash" ]; then
+                    echo "Edit state file is invalid. Delete it and run 'g edit' again." >&2
+                    return 1
+                fi
+                if ! git rev-parse --verify "$original_branch" >/dev/null 2>&1; then
+                    echo "Original branch '$original_branch' not found. Aborting." >&2
+                    return 1
+                fi
+                if ! git rev-parse --verify "$old_commit_hash" >/dev/null 2>&1; then
+                    echo "Old commit '$old_commit_hash' not found. Aborting." >&2
+                    return 1
+                fi
+                echo "Applying edited history onto original branch '$original_branch'..."
+                git rebase --onto HEAD "$old_commit_hash" "$original_branch" || return 1
+                rm -f "$state_file"
+                if [ "$delete_temp_branch" -eq 1 ]; then
+                    local short_hash=${old_commit_hash:0:7}
+                    local temp_branch="g-edit-${short_hash}"
+                    if git show-ref --verify --quiet "refs/heads/$temp_branch"; then
+                        echo "Deleting temporary branch '$temp_branch'..."
+                        git branch -D "$temp_branch"
+                    else
+                        echo "No temporary branch '$temp_branch' found to delete."
+                    fi
+                fi
+                echo -e "\nRebase completed successfully."
+                ;;
+            .)
+                if [[ "$1" == "-a" || "$1" == "--all" ]]; then
+                    shift
+                    local repo_root
+                    repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+                    git -C "$repo_root" add -A
+                    echo "Added all modified files to stage."
+                    return $?
+                fi
+                if [ -z "$1" ]; then
+                    g.general info
+                elif [[ "$1" == "." ]]; then
+                    if git add .; then
+                        echo "All modified files in \"$PWD\" added to stage."
+                    else
+                        echo "Error adding all changes to stage." >&2
+                    fi
+                else
+                    if git add -- "$@"; then
+                        local staged_now
+                        staged_now=$(git diff --cached --name-only -- "$@" 2>/dev/null)
+                        if [ -z "$staged_now" ]; then
+                            echo "No changes added to stage."
+                            return 0
+                        fi
+                        echo "Files added to stage:"
+                        while read -r i; do
+                            [[ -n "$i" ]] && { [ -d "$i" ] && echo "- $i/*" || echo "- $i"; }
+                        done <<< "$staged_now"
+                    else
+                        echo "Error adding specified files." >&2
+                    fi
+                fi
+                ;;
+            ,)
+                if [[ -z "$1" ]]; then g.branch; return; fi
+                local branch
+                while read -r branch; do
+                    if [[ "$1" == "$branch" ]]; then g.branch "$branch"; return; fi
+                done < <(git branch --format="%(refname:short)")
+                g.branch new "$1"
+                ;;
+            ..)
+                if [[ "$1" == "-a" || "$1" == "--all" ]]; then
+                    shift
+                    local repo_root
+                    repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+                    ( cd "$repo_root" || exit 1; g.general .. . > /dev/null 2>&1 )
+                    echo "All staged files have been unstaged."
+                    return $?
+                fi
+                if [ "$#" -eq 0 ]; then g.stage rm; else g.stage rm "$@"; fi
+                ;;
+            ,.|.,) g.stage ls ;;
+            git) git "$@" ;;
+            *) echo "Unknown general command: $cmd" >&2; return 1 ;;
+        esac
+    }
+
+    g.branch() {
+        local sub="${1:-}"
+        shift || true
+        case "$sub" in
+            -h|--help)
+                echo "Usage: g branch {new|ls|rm|send|rename|rebase|ff|merge}" >&2
+                return 0
+                ;;
+            "") git branch; return 0 ;;
+            new)
+                if [ -n "$1" ]; then git checkout -b "$1"
+                else echo "Usage: g branch new <branch-name>" >&2; return 1; fi
+                ;;
+            list|ls) git branch -a ;;
+            rm)
+                local selected branch
+                if [ -z "$1" ]; then
+                    selected=$(git branch --format="%(refname:short)" | fzf --multi --prompt="Branch to delete: " --height=30%)
+                    [ -n "$selected" ] && for branch in $selected; do git branch -D "$branch"; done
+                else
+                    git branch -D "$1"
+                fi
+                ;;
+            send)
+                local branch_to_push="${1:-HEAD}"
+                git push origin "${branch_to_push}"
+                ;;
+            rename)
+                local target_branch="" new_name=""
+                if [ "$#" -gt 0 ] && [[ "$1" != --* ]]; then
+                    target_branch="$1"; shift
+                fi
+                while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                        --name) shift; new_name="$1" ;;
+                        *) return 1 ;;
+                    esac
+                    shift
+                done
+                if [ -z "$target_branch" ]; then
+                    local selected
+                    selected=$(git branch --format="%(refname:short)" | fzf --prompt="Branch to rename: " --height=30% --layout=reverse --border)
+                    [ -z "$selected" ] && return 1
+                    target_branch="$selected"
+                else
+                    if ! git show-ref --verify --quiet "refs/heads/$target_branch"; then
+                        echo "Branch '$target_branch' does not exist." >&2
+                        return 1
+                    fi
+                fi
+                if [ -z "$new_name" ]; then
+                    read -r -p "New name for branch '$target_branch': " new_name
+                    [ -z "$new_name" ] && return 1
+                fi
+                git branch -m "$target_branch" "$new_name"
+                ;;
+            rebase|ff)
+                local remote="origin" branches=() op="$sub"
+                while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                        -r|--remote) shift; remote="${1:-origin}" ;;
+                        *) branches+=("$1") ;;
+                    esac
+                    shift
+                done
+                local current_branch
+                current_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+                if [ "${#branches[@]}" -eq 0 ]; then
+                    [[ "$op" == "rebase" ]] && git pull "$remote" HEAD --rebase || git pull "$remote" HEAD --ff
+                    return $?
+                fi
+                local start_branch="$current_branch" b target_branch
+                for b in "${branches[@]}"; do
+                    target_branch="$b"
+                    if [ "$b" = "./HEAD" ]; then
+                        [ -z "$current_branch" ] && return 1
+                        target_branch="$current_branch"
+                    fi
+                    if ! git show-ref --verify --quiet "refs/heads/$target_branch"; then continue; fi
+                    git checkout "$target_branch" || continue
+                    if [[ "$op" == "rebase" ]]; then
+                        git pull "$remote" "$target_branch" --rebase || { [[ -n "$start_branch" ]] && git checkout "$start_branch" >/dev/null 2>&1; return 1; }
+                    else
+                        git pull "$remote" "$target_branch" --ff || { [[ -n "$start_branch" ]] && git checkout "$start_branch" >/dev/null 2>&1; return 1; }
+                    fi
+                done
+                if [ -n "$start_branch" ] && git show-ref --verify --quiet "refs/heads/$start_branch"; then
+                    git checkout "$start_branch" >/dev/null 2>&1 || true
+                fi
+                ;;
+            merge)
+                local branches=() message=""
+                while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                        -m|--message) shift; message="$*"; break ;;
+                        *) branches+=("$1") ;;
+                    esac
+                    shift
+                done
+                if [ "${#branches[@]}" -eq 0 ]; then
+                    local selected
+                    selected=$(git branch --format="%(refname:short)" | fzf --multi --prompt="Branches to merge into current: " --height=40% --layout=reverse --border)
+                    [ -z "$selected" ] && return 1
+                    read -r -a branches <<< "$selected"
+                fi
+                local b
+                for b in "${branches[@]}"; do
+                    if ! git show-ref --verify --quiet "refs/heads/$b"; then return 1; fi
+                done
+                if [ -z "$message" ]; then
+                    read -r -p "Merge commit message: " message
+                    [ -z "$message" ] && return 1
+                fi
+                git merge "${branches[@]}" -m "$message"
+                ;;
+            *)
+                if git show-ref --verify --quiet "refs/heads/$sub"; then
+                   git checkout "$sub"
+                else
+                    git branch "$sub" "$@"
+                fi
+                ;;
+        esac
+    }
+
+    g.remote() {
+        local sub="${1:-}"
+        shift || true
+        case "$sub" in
+            -h|--help)
+                echo "Usage: g remote {new|ls|rm|update}" >&2
+                return 0
+                ;;
+            new)
+                local name="" url=""
+                while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                        --name) shift; name="$1" ;;
+                        --url) shift; url="$1" ;;
+                        *)
+                            if [ -z "$name" ]; then name="$1"
+                            elif [ -z "$url" ]; then url="$1"
+                            else return 1; fi
+                            ;;
+                    esac
+                    shift
+                done
+                [ -z "$name" ] || [ -z "$url" ] && return 1
+                git remote add "$name" "$url"
+                ;;
+            list|ls)
+                local -A seen
+                while read -r name url _; do
+                    if [[ -n "$name" && -z "${seen["$name $url"]:-}" ]]; then
+                        printf "%-20s %s\n" "$name" "$url"
+                        seen["$name $url"]=1
+                    fi
+                done < <(git remote -v 2>/dev/null)
+                ;;
+            rm)
+                local targets=()
+                if [ "$#" -eq 0 ]; then
+                    local remotes=""
+                    while read -r name _; do
+                        remotes+="$name"$'\n'
+                    done < <(git remote -v 2>/dev/null)
+                    remotes=$(printf '%s' "$remotes" | sort -u)
+                    [ -z "$remotes" ] && return 1
+                    local selected
+                    selected=$(printf '%s\n' "$remotes" | fzf --multi --prompt="Remotes to delete: " --height=40% --layout=reverse --border)
+                    [ -z "$selected" ] && return 1
+                    while IFS= read -r line; do
+                        [ -n "$line" ] && targets+=("${line%%$'\t'*}")
+                    done <<< "$selected"
+                else
+                    local arg
+                    for arg in "$@"; do
+                        if git remote get-url "$arg" >/dev/null 2>&1; then
+                            targets+=("$arg")
+                        else
+                            while read -r name url _; do
+                                [[ "$url" == "$arg" ]] && targets+=("$name")
+                            done < <(git remote -v 2>/dev/null)
+                        fi
+                    done
+                fi
+                [ "${#targets[@]}" -eq 0 ] && return 1
+                local uniq_targets=() t u skip
+                for t in "${targets[@]}"; do
+                    skip=0
+                    for u in "${uniq_targets[@]}"; do [[ "$u" = "$t" ]] && skip=1 && break; done
+                    [ "$skip" -eq 0 ] && uniq_targets+=("$t")
+                done
+                echo "Remotes to delete: ${uniq_targets[*]}"
+                read -r -p "Are you sure? [y/N] " ans
+                case "$ans" in [Yy]*) ;; *) return 1 ;; esac
+                local r
+                for r in "${uniq_targets[@]}"; do git remote remove "$r"; done
+                ;;
+            update)
+                local remote_name="$1"
+                shift || true
+                [ -z "$remote_name" ] && return 1
+                local new_name="" new_url=""
+                while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                        --name) shift; new_name="$1" ;;
+                        --url) shift; new_url="$1" ;;
+                        *) return 1 ;;
+                    esac
+                    shift
+                done
+                if [ -z "$new_name" ] && [ -z "$new_url" ]; then return 1; fi
+                if ! git remote get-url "$remote_name" >/dev/null 2>&1; then return 1; fi
+                if [ -n "$new_name" ] && [ "$new_name" != "$remote_name" ]; then
+                    git remote rename "$remote_name" "$new_name" || return 1
+                    remote_name="$new_name"
+                fi
+                if [ -n "$new_url" ]; then
+                    git remote set-url "$remote_name" "$new_url" || return 1
+                fi
+                ;;
+            *) return 1 ;;
+        esac
+    }
+
+    g.stage() {
+        local sub="${1:-}"
+        shift || true
+        case "$sub" in
+            -h|--help|"") echo "Usage: g stage {add|ls|rm}" >&2; return 0 ;;
+            add)
+                local files="" selected
+                while read -r st f; do [[ "$st" =~ ^[MARCU?] ]] && files+="$f"$'\n'; done < <(git status --porcelain 2>/dev/null)
+                selected=$(printf '%s' "$files" | fzf --multi --prompt="Add file to stage: " --height=30%)
+                [ -n "$selected" ] && git add $selected
+                ;;
+            list|ls) git diff --cached --name-only ;;
+            rm)
+                if [ "$#" -eq 0 ]; then
+                    local repo_root current_dir staged
+                    repo_root=$(git rev-parse --show-toplevel)
+                    current_dir=$(pwd)
+                    staged=$(git diff --cached --name-only | fzf --multi --prompt="Unstage file: " --height=30%)
+                    if [ -n "$staged" ]; then
+                        readarray -t files_to_unstage <<< "$staged"
+                        local files_for_reset=() file
+                        for file in "${files_to_unstage[@]}"; do
+                            local abs_from_root="$repo_root/$file"
+                            local rel_from_cwd
+                            if command -v realpath >/dev/null 2>&1; then
+                                rel_from_cwd=$(realpath --relative-to="$current_dir" "$abs_from_root" 2>/dev/null || echo "$file")
+                            else
+                                rel_from_cwd="$file"
+                            fi
+                            [ -e "$rel_from_cwd" ] && files_for_reset+=("$rel_from_cwd") || files_for_reset+=("$file")
+                        done
+                        [ "${#files_for_reset[@]}" -eq 0 ] && return 1
+                        if git reset HEAD -- "${files_for_reset[@]}" > /dev/null; then
+                            for f in "${files_to_unstage[@]}"; do echo "- $f"; done
+                        fi
+                    fi
+                else
+                    if git reset HEAD -- "$@" > /dev/null; then
+                        for f in "$@"; do echo "- $f"; done
+                    fi
+                fi
+                ;;
+            *) return 1 ;;
+        esac
+    }
+
+    g.conflict() {
+        local sub="${1:-}"
+        shift || true
+        case "$sub" in
+            -h|--help)
+                echo "Usage: g conflict {ls|resolve|diff|<branch>}" >&2
+                return 0
+                ;;
+            ""|"HEAD")
+                local current_branch
+                current_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo "HEAD")
+                local files
+                files=$(git diff --name-only --diff-filter=U)
+                if [ -z "$files" ]; then
+                    echo "No merge conflicts."
+                else
+                    echo "Conflicts in:"; printf '  %s\n' $files
+                fi
+                ;;
+            ls|list)
+                local files="" file
+                if [ $# -eq 0 ]; then
+                    files=$(git diff --name-only --diff-filter=U)
+                    [ -z "$files" ] && return 0
+                else
+                    files="$*"
+                fi
+                for file in $files; do
+                    [ ! -f "$file" ] && continue
+                    if ! grep -q '^<<<<<<< ' "$file" 2>/dev/null; then continue; fi
+                    echo "===== Conflicts in $file ====="
+                    local c=0 showing=0 ln=0
+                    while IFS= read -r line; do
+                        ((ln++))
+                        if [[ "$line" == "<<<<<<< "* ]]; then
+                            ((c++)); showing=1
+                            printf "----- Conflict %d (start line %d) -----\n" "$c" "$ln"
+                        fi
+                        ((showing)) && printf '%s\n' "$line"
+                        if [[ "$line" == ">>>>>>> "* ]]; then
+                            printf "----- End of conflict %d (line %d) -----\n\n" "$c" "$ln"
+                            showing=0
+                        fi
+                    done < "$file"
+                done
+                ;;
+            resolve)
+                local git_dir
+                git_dir=$(git rev-parse --git-dir 2>/dev/null) || return 1
+                local state_file="$git_dir/g-edit-state"
+                if [ -z "$1" ] && [ ! -f "$state_file" ]; then
+                    local files
+                    files=$(git diff --name-only --diff-filter=U)
+                    [ -z "$files" ] && return 0
+                fi
+                if [ ! -f "$state_file" ]; then
+                    local current_branch
+                    current_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+                    [ -z "$current_branch" ] && return 1
+                    local old_commit_hash
+                    old_commit_hash=$(git rev-parse HEAD)
+                    local has_rebase=0 has_merge=0
+                    [ -d "$git_dir/rebase-apply" ] || [ -d "$git_dir/rebase-merge" ] && has_rebase=1
+                    [ -f "$git_dir/MERGE_HEAD" ] && has_merge=1
+                    if [ "$has_rebase" -eq 1 ]; then return 1; fi
+                    if [ "$has_merge" -eq 1 ]; then
+                        local merge_head merge_msg
+                        merge_head=$(cat "$git_dir/MERGE_HEAD" 2>/dev/null || true)
+                        merge_msg=$(cat "$git_dir/MERGE_MSG" 2>/dev/null || true)
+                        [ -z "$merge_head" ] && return 1
+                        read -r -p "Proceed? [y/N] " ans
+                        case "$ans" in [Yy]*) ;; *) return 1 ;; esac
+                        { printf '%s\n' "$current_branch"; printf '%s\n' "$old_commit_hash"; } > "$state_file"
+                        local short_hash=${old_commit_hash:0:7}
+                        local work_branch="g-edit-${short_hash}"
+                        git merge --abort || { rm -f "$state_file"; return 1; }
+                        git branch "$work_branch" "$old_commit_hash" || { rm -f "$state_file"; return 1; }
+                        git checkout "$work_branch" || { rm -f "$state_file"; return 1; }
+                        if [ -n "$merge_msg" ]; then git merge -m "$merge_msg" "$merge_head" || true
+                        else git merge "$merge_head" || true; fi
+                    else
+                        { printf '%s\n' "$current_branch"; printf '%s\n' "$old_commit_hash"; } > "$state_file"
+                        local short_hash=${old_commit_hash:0:7}
+                        local work_branch="g-edit-${short_hash}"
+                        git branch "$work_branch" "$current_branch" || { rm -f "$state_file"; return 1; }
+                        git checkout "$work_branch" || { rm -f "$state_file"; return 1; }
+                    fi
+                else
+                    local original_branch old_commit_hash
+                    { read -r original_branch; read -r old_commit_hash; } < "$state_file"
+                    local expected_branch="g-edit-${old_commit_hash:0:7}"
+                    local current_branch
+                    current_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+                    if [ "$current_branch" != "$expected_branch" ]; then return 1; fi
+                fi
+                if [ -z "$1" ]; then
+                    local files
+                    files=$(git diff --name-only --diff-filter=U)
+                    [ -z "$files" ] && return 0
+                    local selected
+                    selected=$(printf '%s\n' $files | fzf --multi --prompt="Select files to resolve: " --height=40% --layout=reverse --border)
+                    [ -z "$selected" ] && return 1
+                    local f
+                    for f in $selected; do g.conflict resolve "$f" || return 1; done
+                else
+                    local file="$1"
+                    [ ! -f "$file" ] && return 1
+                    if ! grep -q '^<<<<<<< ' "$file" 2>/dev/null; then return 0; fi
+                    local tmp_out tmp_ours tmp_theirs
+                    tmp_out=$(mktemp); tmp_ours=$(mktemp); tmp_theirs=$(mktemp)
+                    local in_conflict=0 side=""
+                    local -a block_lines ours_lines theirs_lines
+                    while IFS= read -r line || [ -n "$line" ]; do
+                        if [ "$in_conflict" -eq 0 ]; then
+                            case "$line" in
+                                "<<<<<<< "*) in_conflict=1; side="ours"; block_lines=("$line"); ours_lines=(); theirs_lines=() ;;
+                                *) printf '%s\n' "$line" >> "$tmp_out" ;;
+                            esac
+                        else
+                            case "$side" in
+                                ours)
+                                    if [ "$line" = "=======" ]; then block_lines+=("$line"); side="theirs"
+                                    else block_lines+=("$line"); ours_lines+=("$line"); fi ;;
+                                theirs)
+                                    block_lines+=("$line")
+                                    case "$line" in
+                                        ">>>>>>> "*)
+                                            printf '%s\n' "${ours_lines[@]}" > "$tmp_ours"
+                                            printf '%s\n' "${theirs_lines[@]}" > "$tmp_theirs"
+                                            local plus_file minus_file
+                                            plus_file=$(mktemp "/tmp/plus-XXXX")
+                                            minus_file=$(mktemp "/tmp/minus-XXXX")
+                                            cp "$tmp_ours" "$plus_file"
+                                            cp "$tmp_theirs" "$minus_file"
+                                            git --no-pager diff --no-index --color "$plus_file" "$minus_file" || true
+                                            while true; do
+                                                if ! read -r -p "Choose [+] plus, [-] minus, [+-] or [-+], [Enter=skip], [q/quit]: " ans </dev/tty; then
+                                                    rm -f "$tmp_out" "$tmp_ours" "$tmp_theirs" "$plus_file" "$minus_file"; return 1
+                                                fi
+                                                case "$ans" in
+                                                    "+") printf '%s\n' "${ours_lines[@]}" >> "$tmp_out"; break ;;
+                                                    "-") printf '%s\n' "${theirs_lines[@]}" >> "$tmp_out"; break ;;
+                                                    "+-") printf '%s\n' "${ours_lines[@]}" >> "$tmp_out"; printf '%s\n' "${theirs_lines[@]}" >> "$tmp_out"; break ;;
+                                                    "-+") printf '%s\n' "${theirs_lines[@]}" >> "$tmp_out"; printf '%s\n' "${ours_lines[@]}" >> "$tmp_out"; break ;;
+                                                    "") printf '%s\n' "${block_lines[@]}" >> "$tmp_out"; break ;;
+                                                    q|Q|quit|QUIT) rm -f "$tmp_out" "$tmp_ours" "$tmp_theirs" "$plus_file" "$minus_file"; return 1 ;;
+                                                esac
+                                            done
+                                            rm -f "$plus_file" "$minus_file"
+                                            in_conflict=0; side=""; block_lines=(); ours_lines=(); theirs_lines=() ;;
+                                        *) theirs_lines+=("$line") ;;
+                                    esac ;;
+                            esac
+                        fi
+                    done < "$file"
+                    rm -f "$tmp_ours" "$tmp_theirs"
+                    if [ "$in_conflict" -ne 0 ]; then rm -f "$tmp_out"; return 1; fi
+                    mv "$tmp_out" "$file"
+                fi
+                ;;
+            diff)
+                local file="$1" tmp_ours tmp_theirs
+                tmp_ours=$(mktemp); tmp_theirs=$(mktemp)
+                if ! git show ":2:$file" >"$tmp_ours" 2>/dev/null || ! git show ":3:$file" >"$tmp_theirs" 2>/dev/null; then
+                    rm -f "$tmp_ours" "$tmp_theirs"; return 1
+                fi
+                vimdiff "$tmp_ours" "$tmp_theirs"
+                local status=$?
+                rm -f "$tmp_ours" "$tmp_theirs"
+                return $status
+                ;;
+            *)
+                local target_branch="$sub"
+                if ! git rev-parse --verify "$target_branch" >/dev/null 2>&1; then return 1; fi
+                local current_branch base out
+                current_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo "HEAD")
+                if ! base=$(git merge-base HEAD "$target_branch" 2>/dev/null); then return 1; fi
+                out=$(git merge-tree "$base" HEAD "$target_branch") || true
+                if printf '%s\n' "$out" | grep -q '^<<<<<<< '; then echo "Merging WOULD produce conflicts."; else echo "Merging would NOT produce conflicts."; fi
+                ;;
+        esac
+    }
+
+    g.tag() {
+        local sub="${1:-}"
+        local all_args=("$@")
+        shift || true
+        case "$sub" in
+            -h|--help) echo "Usage: g tag {new|ls|rm|send|update}" >&2; return 0 ;;
+            new)
+                local tagtype="$1"; shift 1 || true
+                local msg="$*"
+                [ -z "$tagtype" ] && return 1
+                local latest_tag new_tag
+                latest_tag=$(git describe --tags --abbrev=0 2>/dev/null)
+                if [ -z "$latest_tag" ]; then
+                    new_tag="v0.1.0"
+                else
+                    local major minor patch
+                    IFS='.' read major minor patch <<< "${latest_tag#v}"
+                    case "$tagtype" in
+                        patch) patch=$((patch + 1));;
+                        minor) minor=$((minor + 1)); patch=0;;
+                        major) major=$((major + 1)); minor=0; patch=0;;
+                        *) return 1 ;;
+                    esac
+                    new_tag="v$major.$minor.$patch"
+                fi
+                if [ -n "$msg" ]; then git tag "$new_tag" -m "$msg"; else git tag "$new_tag"; fi
+                ;;
+            list|ls) git tag --sort=-creatordate -n ;;
+            rm)
+                local selected tag
+                if [ -z "$1" ]; then
+                    selected=$(git tag --sort=-creatordate -l | fzf --multi --prompt="Tag to delete: " --height=30%)
+                    [ -n "$selected" ] && for tag in $selected; do git tag -d "$tag"; done
+                else
+                    git tag -d "$1"
+                fi
+                ;;
+            send)
+                local latest_tag
+                latest_tag=$(git describe --tags --abbrev=0 2>/dev/null)
+                [ -z "$latest_tag" ] && return 1
+                git push origin "$latest_tag"
+                ;;
+            update)
+                local tag="" new_name="" new_desc=""
+                if [ $# -gt 0 ] && [[ "$1" != --* ]]; then tag="$1"; shift; fi
+                if [ -z "$tag" ]; then
+                    local selected
+                    selected=$(git tag --sort=-creatordate -n | fzf --prompt="Tag to update: " --height=30%)
+                    [ -z "$selected" ] && return 1
+                    tag="${selected%% *}"
+                fi
+                while [ $# -gt 0 ]; do
+                    case "$1" in
+                        --name) shift; new_name="$1" ;;
+                        --desc|--message|-m) shift; new_desc="$1" ;;
+                        *) return 1 ;;
+                    esac
+                    shift
+                done
+                local commit_ref existing_desc
+                commit_ref=$(git rev-list -n 1 "$tag" 2>/dev/null) || return 1
+                existing_desc=$(git for-each-ref "refs/tags/$tag" --format='%(contents)' 2>/dev/null)
+                if [ -z "$new_name" ]; then
+                    read -rp "New tag name [$tag]: " new_name
+                    [ -z "$new_name" ] && new_name="$tag"
+                fi
+                if [ -z "$new_desc" ]; then
+                    read -rp "New tag description (leave empty to keep current/none): " new_desc
+                    [ -z "$new_desc" ] && [ -n "$existing_desc" ] && new_desc="$existing_desc"
+                fi
+                git tag -d "$tag" >/dev/null 2>&1 || true
+                if [ -n "$new_desc" ]; then git tag -a "$new_name" -m "$new_desc" "$commit_ref" || return 1
+                else git tag "$new_name" "$commit_ref" || return 1; fi
+                ;;
+            *) git tag "${all_args[@]}" ;;
+        esac
+    }
+
+    g.commit() {
+        local cmd="$1"
+        shift || true
+        case "$cmd" in
+            new)
+                local msg=""
+                if [ $# -eq 0 ]; then read -e -p "Commit message: " msg
+                else msg="$*"; fi
+                [ -z "$msg" ] && return 1
+                git commit -m "$msg"
+                ;;
+            list|ls) git log --oneline --decorate --graph -n "${1:-10}" ;;
+            rm)
+                local targets=()
+                if [ "$#" -eq 0 ]; then
+                    local selected
+                    selected=$(git log --oneline | fzf --multi --prompt="Select commits to delete: " --height=50%)
+                    [ -z "$selected" ] && return 1
+                    while IFS= read -r line; do
+                        [ -z "$line" ] && continue
+                        local short="${line%% *}"
+                        local hash
+                        if hash=$(git rev-parse --verify "$short" 2>/dev/null); then targets+=("$hash"); fi
+                    done <<< "$selected"
+                else
+                    local arg
+                    for arg in "$@"; do
+                        local ref hash
+                        if [[ "$arg" =~ ^[0-9]+$ ]]; then
+                            local n="$arg"
+                            [ "$n" -lt 1 ] && return 1
+                            [ "$n" -eq 1 ] && ref="HEAD" || ref="HEAD~$n"
+                        else
+                            ref="$arg"
+                        fi
+                        if ! hash=$(git rev-parse --verify "$ref" 2>/dev/null); then return 1; fi
+                        targets+=("$hash")
+                    done
+                fi
+                [ "${#targets[@]}" -eq 0 ] && return 1
+                local uniq_targets=() h s seen
+                for h in "${targets[@]}"; do
+                    seen=0
+                    for s in "${uniq_targets[@]}"; do [[ "$s" = "$h" ]] && seen=1 && break; done
+                    [ "$seen" -eq 0 ] && uniq_targets+=("$h")
+                done
+                local head_hash base_commit=""
+                head_hash=$(git rev-parse HEAD)
+                for h in "${uniq_targets[@]}"; do
+                    if ! git merge-base --is-ancestor "$h" "$head_hash" 2>/dev/null; then return 1; fi
+                done
+                while IFS= read -r c; do
+                    for h in "${uniq_targets[@]}"; do [[ "$h" = "$c" ]] && base_commit="$h" && break 2; done
+                done < <(git rev-list --reverse "$head_hash" 2>/dev/null)
+                [ -z "$base_commit" ] && return 1
+                local parent_hash
+                if ! parent_hash=$(git rev-parse "${base_commit}^" 2>/dev/null); then return 1; fi
+                read -r -p "Proceed with removing these commits? [y/n] " answer
+                case "$answer" in [Yy]*) ;; *) return 1 ;; esac
+                local git_dir seq_editor
+                git_dir=$(git rev-parse --git-dir 2>/dev/null) || return 1
+                seq_editor="$git_dir/g-rm-sequence-editor.sh"
+                cat > "$seq_editor" <<'EOF'
+#!/bin/sh
+file="$1"
+tmp="$file.tmp"
+targets=" $G_RM_COMMITS_FULL "
+: > "$tmp"
+while IFS= read -r line; do
+    case "$line" in
+        pick\ *|edit\ *|reword\ *|fixup\ *|squash\ *)
+            set -- $line
+            cmd="$1"
+            hash="$2"
+            full_hash=$(command git rev-parse --verify "$hash" 2>/dev/null || echo "")
+            if [ -n "$full_hash" ]; then
+                case "$targets" in *" $full_hash "*) echo "drop ${line#* }" >> "$tmp"; continue ;; esac
+            fi
+            echo "$line" >> "$tmp"
+            ;;
+        *) echo "$line" >> "$tmp" ;;
+    esac
+done < "$file"
+mv "$tmp" "$file"
+EOF
+                chmod +x "$seq_editor"
+                export G_RM_COMMITS_FULL="${uniq_targets[*]}"
+                GIT_SEQUENCE_EDITOR="$seq_editor" git rebase -i "$parent_hash"
+                ;;
+            edit)
+                local target="$1" commit_to_edit
+                shift || true
+                if [ -z "$target" ]; then
+                    local selected
+                    selected=$(git log --pretty=format:'%h %s [%an]' | fzf --prompt="Select commit to edit: " --height=50%)
+                    [ -z "$selected" ] && return 1
+                    commit_to_edit="${selected%% *}"
+                else
+                    if [[ "$target" =~ ^[0-9]+$ ]]; then commit_to_edit="HEAD~$target"
+                    else commit_to_edit="$target"; fi
+                fi
+                local commit_hash parent_hash current_branch git_dir state_file
+                commit_hash=$(git rev-parse --verify "$commit_to_edit" 2>/dev/null) || return 1
+                parent_hash=$(git rev-parse "${commit_hash}^" 2>/dev/null) || return 1
+                current_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null)
+                [ -z "$current_branch" ] && return 1
+                git_dir=$(git rev-parse --git-dir 2>/dev/null) || return 1
+                state_file="$git_dir/g-edit-state"
+                [ -f "$state_file" ] && return 1
+                { printf '%s\n' "$current_branch"; printf '%s\n' "$commit_hash"; } > "$state_file"
+                local short_hash=${commit_hash:0:7} work_branch="g-edit-${short_hash}"
+                git branch "$work_branch" "$current_branch" || return 1
+                git checkout "$work_branch" || return 1
+                git reset --hard "$commit_hash" || return 1
+                git reset --soft "$parent_hash" || return 1
+                ;;
+            join)
+                local git_dir head_full root_hash root_short commits=() message=""
+                git_dir=$(git rev-parse --git-dir 2>/dev/null) || return 1
+                git diff-index --quiet HEAD -- || return 1
+                head_full=$(git rev-parse HEAD)
+                root_hash=$(git rev-list --max-parents=0 HEAD 2>/dev/null | head -n1 || true)
+                [ -n "$root_hash" ] && root_short=$(git rev-parse --short "$root_hash" 2>/dev/null || true)
+                if [ $# -eq 0 ]; then
+                    local commits_list=""
+                    while read -r h rest; do
+                        [[ -n "$root_short" && "$h" == "$root_short" ]] && continue
+                        commits_list+="$h $rest"$'\n'
+                    done < <(git log --pretty=format:'%h %s [%an]' 2>/dev/null)
+                    local selected
+                    selected=$(printf '%s' "$commits_list" | fzf --multi --prompt="Select commits to squash: " --height=50%)
+                    [ -z "$selected" ] && return 1
+                    local short_hashes=()
+                    while IFS= read -r line; do [[ -n "$line" ]] && short_hashes+=("${line%% *}"); done <<< "$selected"
+                    local h full
+                    for h in "${short_hashes[@]}"; do
+                        full=$(git rev-parse "$h" 2>/dev/null) || return 1
+                        if [ -n "$root_hash" ] && [ "$full" = "$root_hash" ]; then continue; fi
+                        commits+=( "$full" )
+                    done
+                    read -r -p "Squash commit message: " message
+                    [ -z "$message" ] && return 1
+                else
+                    while [ $# -gt 0 ]; do
+                        case "$1" in
+                            -m|--message) shift; message="$*"; break ;;
+                            *)
+                                local full
+                                full=$(git rev-parse "$1" 2>/dev/null) || return 1
+                                if [ -n "$root_hash" ] && [ "$full" = "$root_hash" ]; then return 1; fi
+                                commits+=( "$full" )
+                                shift ;;
+                        esac
+                    done
+                    [ "${#commits[@]}" -lt 1 ] && return 1
+                    if [ -z "$message" ]; then
+                        read -r -p "Squash commit message: " message
+                        [ -z "$message" ] && return 1
+                    fi
+                fi
+                [ "${#commits[@]}" -lt 2 ] && return 1
+                local c
+                for c in "${commits[@]}"; do
+                    if ! git merge-base --is-ancestor "$c" "$head_full" 2>/dev/null; then return 1; fi
+                done
+                local oldest="" max_dist=-1 dist
+                for c in "${commits[@]}"; do
+                    if git rev-parse "${c}^" >/dev/null 2>&1; then dist=$(git rev-list --count "${c}^..HEAD")
+                    else dist=$(git rev-list --count "${c}..HEAD"); fi
+                    if [ "$dist" -gt "$max_dist" ]; then max_dist=$dist; oldest="$c"; fi
+                done
+                local parent_oldest
+                parent_oldest=$(git rev-parse "${oldest}^" 2>/dev/null) || return 1
+                read -r -p "Proceed? This rewrites history. [y/N] " answer2
+                case "$answer2" in [Yy]*) ;; *) return 1 ;; esac
+                git reset --soft "$parent_oldest" || return 1
+                git commit -m "$message" || return 1
+                ;;
+            update)
+                local target_ref="" commit_hash="" new_message=""
+                if [ "$#" -eq 0 ]; then
+                    local selected
+                    selected=$(git log --pretty=format:'%h %s [%an]' | fzf --prompt="Select commit to update: " --height=50% --layout=reverse --border)
+                    [ -z "$selected" ] && return 1
+                    target_ref="${selected%% *}"
+                else
+                    target_ref="$1"; shift
+                    [[ "$target_ref" =~ ^[0-9]+$ ]] && target_ref="HEAD~$target_ref"
+                    while [ "$#" -gt 0 ]; do
+                        case "$1" in
+                            -m|--message) shift; new_message="$*"; break ;;
+                            *) return 1 ;;
+                        esac
+                    done
+                fi
+                commit_hash=$(git rev-parse --verify "$target_ref" 2>/dev/null) || return 1
+                if [ -z "$new_message" ]; then
+                    local old_message
+                    old_message=$(git log -1 --pretty=%B "$commit_hash")
+                    read -r -p "New commit message: " new_message
+                    [ -z "$new_message" ] && return 1
+                fi
+                local head_hash
+                head_hash=$(git rev-parse HEAD)
+                if [ "$commit_hash" = "$head_hash" ]; then
+                    git commit --amend -m "$new_message"
+                    return $?
+                fi
+                local parent_hash2 git_dir2 seq_editor msg_editor
+                parent_hash2=$(git rev-parse "${commit_hash}^" 2>/dev/null) || return 1
+                git_dir2=$(git rev-parse --git-dir 2>/dev/null) || return 1
+                seq_editor="$git_dir2/g-rename-sequence-editor.sh"
+                msg_editor="$git_dir2/g-rename-msg-editor.sh"
+                if [ ! -x "$seq_editor" ]; then
+                    cat > "$seq_editor" <<'EOF'
+#!/bin/sh
+file="$1"
+tmp="$file.tmp"
+: > "$tmp"
+target="$G_RENAME_TARGET"
+while IFS= read -r line; do
+    case "$line" in "pick $target "*) echo "reword ${line#pick }" >> "$tmp" ;; *) echo "$line" >> "$tmp" ;; esac
+done < "$file"
+mv "$tmp" "$file"
+EOF
+                    chmod +x "$seq_editor"
+                fi
+                if [ ! -x "$msg_editor" ]; then
+                    cat > "$msg_editor" <<'EOF'
+#!/bin/sh
+file="$1"
+printf '%s\n' "$G_RENAME_NEW_MESSAGE" > "$file"
+EOF
+                    chmod +x "$msg_editor"
+                fi
+                export G_RENAME_TARGET="$commit_hash"
+                export G_RENAME_NEW_MESSAGE="$new_message"
+                GIT_SEQUENCE_EDITOR="$seq_editor" GIT_EDITOR="$msg_editor" git rebase -i "$parent_hash2"
+                ;;
+            send)
+                local force_flag=0 target_ref="HEAD"
+                while [ $# -gt 0 ]; do
+                    case "$1" in -f|--force) force_flag=1 ;; *) target_ref="$1" ;; esac
+                    shift
+                done
+                if [ "$force_flag" -eq 1 ]; then git push --force origin "$target_ref"
+                else git push origin "$target_ref"; fi
+                ;;
+            diff)
+                if [ $# -eq 0 ]; then git diff; return; fi
+                git difftool -t vimdiff -y "$@"
+                ;;
+            *)
+                if [ -n "$cmd" ] && [[ "$cmd" == *: ]]; then
+                    local msg
+                    if [ $# -gt 0 ]; then msg="$cmd $*"; else msg="$cmd"; fi
+                    git commit -m "$msg"
+                    return
+                fi
+                return 1
+                ;;
+        esac
+    }
+
+    g.__compl__() {
+        _g_unstaged_files_relative() {
+            local repo_root file abs rel files=()
+            repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return
+            while IFS= read -r file; do
+                abs="$repo_root/$file"
+                if command -v realpath >/dev/null 2>&1; then rel=$(realpath --relative-to="$PWD" "$abs" 2>/dev/null || printf '%s' "$file")
+                else rel="$file"; fi
+                files+=("$rel")
+            done < <({ git diff --name-only; git ls-files --others --exclude-standard; } 2>/dev/null | sort -u)
+            printf '%s\n' "${files[@]}"
+        }
+
+        _g_staged_files_relative() {
+            local repo_root file abs rel files=()
+            repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return
+            while IFS= read -r file; do
+                abs="$repo_root/$file"
+                if command -v realpath >/dev/null 2>&1; then rel=$(realpath --relative-to="$PWD" "$abs" 2>/dev/null || printf '%s' "$file")
+                else rel="$file"; fi
+                files+=("$rel")
+            done < <(git diff --cached --name-only 2>/dev/null)
+            printf '%s\n' "${files[@]}"
+        }
+
+        _g_filter_candidates_not_used() {
+            local candidates=("$@") used=() i c u skip out=()
+            for (( i=2; i<COMP_CWORD; i++ )); do used+=("${COMP_WORDS[i]}"); done
+            for c in "${candidates[@]}"; do
+                skip=0
+                for u in "${used[@]}"; do [[ "$c" == "$u" ]] && { skip=1; break; }; done
+                (( !skip )) && out+=("$c")
+            done
+            printf '%s\n' "${out[@]}"
+        }
+
+        local cur prev_word
+        cur="${COMP_WORDS[COMP_CWORD]}"
+        prev_word="${COMP_WORDS[COMP_CWORD-1]}"
+
+        local top_level_commands="--help doc: feat: fix: ref: test: apply join diff undo info branch remote tag stage new list ls rm edit update send conflict git . .. ,."
+        local branch_subcommands="new list rm send rename rebase ff merge --help"
+        local tag_subcommands="new list rm send update --help"
+        local tag_new_types="patch minor major --help"
+        local stage_subcommands="add list rm --help"
+        local conflict_subcommands="list resolve diff --help"
+
+        case "${COMP_CWORD}" in
+            1) COMPREPLY=( $(compgen -W "${top_level_commands}" -- "${cur}") ) ;;
+            2)
+                case "${prev_word}" in
+                    ff|push|pull)
+                        if [[ "${prev_word}" == "ff" || "${prev_word}" == "push" || "${prev_word}" == "pull" ]]; then
+                            local remote_branches=""
+                            while IFS= read -r rb; do
+                                rb="${rb##*origin/}"
+                                [[ "$rb" != *"HEAD"* && -n "$rb" ]] && remote_branches+="$rb "
+                            done < <(git branch -r 2>/dev/null)
+                            COMPREPLY=( $(compgen -W "${remote_branches}" -- "${cur}") )
+                        fi
+                        COMPREPLY+=( $(compgen -f -d -- "${cur}") )
+                        ;;
+                    conflict) COMPREPLY=( $(compgen -W "${conflict_subcommands}" -- "${cur}") ) ;;
+                    undo)
+                        local staged_files unstaged_files candidates
+                        staged_files=$(_g_staged_files_relative)
+                        unstaged_files=$(_g_unstaged_files_relative)
+                        candidates="${staged_files} ${unstaged_files}"
+                        COMPREPLY=( $(compgen -W "${candidates}" -- "${cur}") )
+                        ;;
+                    branch)
+                        local existing_branches
+                        existing_branches=$(git branch --format="%(refname:short)" 2>/dev/null)
+                        COMPREPLY=( $(compgen -W "${branch_subcommands} ${existing_branches}" -- "${cur}") )
+                        ;;
+                    send)
+                        local branches
+                        branches=$(git branch --format="%(refname:short)" 2>/dev/null)
+                        COMPREPLY=( $(compgen -W "-f --force ${branches}" -- "${cur}") )
+                        ;;
+                    remote) COMPREPLY=( $(compgen -W "new list ls rm update" -- "${cur}") ) ;;
+                    tag|tags) COMPREPLY=( $(compgen -W "${tag_subcommands}" -- "${cur}") ) ;;
+                    apply) COMPREPLY=( $(compgen -W "-d --delete" -- "${cur}") ) ;;
+                    stage|staged) COMPREPLY=( $(compgen -W "${stage_subcommands}" -- "${cur}") ) ;;
+                    ls|list) COMPREPLY=( $(compgen -W "10 20 30" -- "${cur}") ) ;;
+                    rm)
+                        local hashes
+                        hashes=$(git log --pretty=format:'%h' -n 50 2>/dev/null)
+                        COMPREPLY=( $(compgen -W "${hashes}" -- "${cur}") )
+                        ;;
+                    rebase)
+                        local remote_branches=""
+                        while IFS= read -r rb; do
+                            rb="${rb##*origin/}"
+                            [[ "$rb" != *"HEAD"* && -n "$rb" ]] && remote_branches+="$rb "
+                        done < <(git branch -r 2>/dev/null)
+                        COMPREPLY=( $(compgen -W "1 2 3 4 5 ${remote_branches}" -- "${cur}") )
+                        ;;
+                    .)
+                        local unstaged_files
+                        unstaged_files=$(_g_unstaged_files_relative)
+                        COMPREPLY=( $(compgen -W "--all ${unstaged_files}" -- "${cur}") )
+                        ;;
+                    ..)
+                        local staged_files
+                        staged_files=$(_g_staged_files_relative)
+                        COMPREPLY=( $(compgen -W "--all ${staged_files}" -- "${cur}") )
+                        ;;
+                    force)
+                        local remote_branches2=""
+                        while IFS= read -r rb; do
+                            rb="${rb##*origin/}"
+                            [[ "$rb" != *"HEAD"* && -n "$rb" ]] && remote_branches2+="$rb "
+                        done < <(git branch -r 2>/dev/null)
+                        COMPREPLY=( $(compgen -W "${remote_branches2}" -- "${cur}") )
+                        ;;
+                    edit)
+                        local hashes
+                        hashes=$(git log --pretty=format:'%h' -n 50 2>/dev/null)
+                        COMPREPLY=( $(compgen -W "${hashes}" -- "${cur}") )
+                        ;;
+                    join)
+                        local root_hash root_short hashes=""
+                        root_hash=$(git rev-list --max-parents=0 HEAD 2>/dev/null | head -n1 || true)
+                        [ -n "$root_hash" ] && root_short=$(git rev-parse --short "$root_hash" 2>/dev/null || true)
+                        while IFS= read -r hash; do
+                            [[ -z "$root_short" || "$hash" != "$root_short" ]] && hashes+="$hash "
+                        done < <(git log --pretty=format:'%h' -n 50 2>/dev/null)
+                        COMPREPLY=( $(compgen -W "--message ${hashes}" -- "${cur}") )
+                        ;;
+                    update)
+                        local hashes
+                        hashes=$(git log --pretty=format:'%h' -n 50 2>/dev/null)
+                        COMPREPLY=( $(compgen -W "${hashes}" -- "${cur}") )
+                        ;;
+                    *) ;;
+                esac
+                ;;
+            3)
+                local grand_prev_word="${COMP_WORDS[COMP_CWORD-2]}"
+                if [[ "${COMP_WORDS[1]}" == "join" ]]; then
+                    local root_hash root_short hashes=""
+                    root_hash=$(git rev-list --max-parents=0 HEAD 2>/dev/null | head -n1 || true)
+                    [ -n "$root_hash" ] && root_short=$(git rev-parse --short "$root_hash" 2>/dev/null || true)
+                    while IFS= read -r hash; do
+                        [[ -z "$root_short" || "$hash" != "$root_short" ]] && hashes+="$hash "
+                    done < <(git log --pretty=format:'%h' -n 50 2>/dev/null)
+                    COMPREPLY=( $(compgen -W "--message ${hashes}" -- "${cur}") )
+                    return
+                fi
+                case "${grand_prev_word}" in
+                    branch)
+                        case "${prev_word}" in
+                            new) ;;
+                            rm|send)
+                                local local_branches
+                                local_branches=$(git branch --format="%(refname:short)" 2>/dev/null)
+                                COMPREPLY=( $(compgen -W "${local_branches}" -- "${cur}") )
+                                ;;
+                            rename)
+                                local local_branches
+                                local_branches=$(git branch --format="%(refname:short)" 2>/dev/null)
+                                COMPREPLY=( $(compgen -W "${local_branches} --name" -- "${cur}") )
+                                ;;
+                            rebase|ff)
+                                local local_branches
+                                local_branches=$(git branch --format="%(refname:short)" 2>/dev/null)
+                                COMPREPLY=( $(compgen -W "./HEAD ${local_branches} -r --remote" -- "${cur}") )
+                                ;;
+                            merge)
+                                local local_branches
+                                local_branches=$(git branch --format="%(refname:short)" 2>/dev/null)
+                                COMPREPLY=( $(compgen -W "${local_branches} -m --message" -- "${cur}") )
+                                ;;
+                        esac
+                        ;;
+                    conflict)
+                        case "${prev_word}" in
+                            list|ls|resolve|diff)
+                                local files
+                                files=$(git diff --name-only --diff-filter=U 2>/dev/null)
+                                COMPREPLY=( $(compgen -W "${files}" -- "${cur}") )
+                                ;;
+                        esac
+                        ;;
+                    remote)
+                        case "${prev_word}" in
+                            new) COMPREPLY=( $(compgen -W "--name --url" -- "${cur}") ) ;;
+                            rm|update)
+                                local remotes
+                                remotes=$(git remote 2>/dev/null)
+                                COMPREPLY=( $(compgen -W "${remotes}" -- "${cur}") )
+                                ;;
+                        esac
+                        ;;
+                    tag|tags)
+                        case "${prev_word}" in
+                            new) COMPREPLY=( $(compgen -W "${tag_new_types}" -- "${cur}") ) ;;
+                            rm|send|update)
+                                local existing_tags
+                                existing_tags=$(git tag -l 2>/dev/null)
+                                COMPREPLY=( $(compgen -W "${existing_tags}" -- "${cur}") )
+                                ;;
+                        esac
+                        ;;
+                    stage|staged)
+                        case "${prev_word}" in
+                            add)
+                                local unstaged_files=""
+                                while read -r st f; do
+                                    [[ ! "$st" =~ ^[MARCU?] ]] && unstaged_files+="$f "
+                                done < <(git status --porcelain 2>/dev/null)
+                                COMPREPLY=( $(compgen -f -d -W "${unstaged_files}" -- "${cur}") )
+                                ;;
+                            rm)
+                                local staged_files
+                                staged_files=$(git diff --cached --name-only 2>/dev/null)
+                                COMPREPLY=( $(compgen -f -d -W "${staged_files}" -- "${cur}") )
+                                ;;
+                        esac
+                        ;;
+                    .)
+                        if [[ "$prev_word" == "-a" || "$prev_word" == "--all" ]]; then
+                            COMPREPLY=()
+                        else
+                            local unstaged_files filtered
+                            mapfile -t unstaged_files < <(_g_unstaged_files_relative)
+                            mapfile -t filtered < <(_g_filter_candidates_not_used "${unstaged_files[@]}")
+                            COMPREPLY=( $(compgen -W "${filtered[*]}" -- "${cur}") )
+                        fi
+                        ;;
+                    ..)
+                        if [[ "$prev_word" == "-a" || "$prev_word" == "--all" ]]; then
+                            COMPREPLY=()
+                        else
+                            local staged_files filtered
+                            mapfile -t staged_files < <(_g_staged_files_relative)
+                            mapfile -t filtered < <(_g_filter_candidates_not_used "${staged_files[@]}")
+                            COMPREPLY=( $(compgen -W "${filtered[*]}" -- "${cur}") )
+                        fi
+                        ;; 
+                esac
+                ;;
+            4)
+                if [[ "${COMP_WORDS[1]}" == "tag" || "${COMP_WORDS[1]}" == "tags" ]] && [[ "${COMP_WORDS[2]}" == "update" ]]; then
+                    COMPREPLY=( $(compgen -W "--name --desc --message -m" -- "${cur}") )
+                elif [[ "${COMP_WORDS[1]}" == "remote" && "${COMP_WORDS[2]}" == "update" ]]; then
+                    COMPREPLY=( $(compgen -W "--name --url" -- "${cur}") )
+                fi
+                case "${COMP_WORDS[1]}" in
+                    .)
+                        if [[ "$prev_word" == "-a" || "$prev_word" == "--all" ]]; then COMPREPLY=()
+                        else
+                            local unstaged_files filtered
+                            mapfile -t unstaged_files < <(_g_unstaged_files_relative)
+                            mapfile -t filtered < <(_g_filter_candidates_not_used "${unstaged_files[@]}")
+                            COMPREPLY=( $(compgen -W "${filtered[*]}" -- "${cur}") )
+                        fi ;;
+                    ..)
+                        if [[ "$prev_word" == "-a" || "$prev_word" == "--all" ]]; then COMPREPLY=()
+                        else
+                            local staged_files filtered
+                            mapfile -t staged_files < <(_g_staged_files_relative)
+                            mapfile -t filtered < <(_g_filter_candidates_not_used "${staged_files[@]}")
+                            COMPREPLY=( $(compgen -W "${filtered[*]}" -- "${cur}") )
+                        fi ;; 
+                esac
+                ;;
+            *)
+                case "${COMP_WORDS[1]}" in
+                    branch)
+                        case "${COMP_WORDS[2]}" in
+                            rebase|ff)
+                                if [[ "${prev_word}" == "-r" || "${prev_word}" == "--remote" ]]; then
+                                    local remotes
+                                    remotes=$(git remote 2>/dev/null)
+                                    COMPREPLY=( $(compgen -W "${remotes}" -- "${cur}") )
+                                else
+                                    local local_branches
+                                    local_branches=$(git branch --format="%(refname:short)" 2>/dev/null)
+                                    COMPREPLY=( $(compgen -W "./HEAD ${local_branches} -r --remote" -- "${cur}") )
+                                fi
+                                ;;
+                            merge)
+                                if [[ "${prev_word}" == "-m" || "${prev_word}" == "--message" ]]; then COMPREPLY=()
+                                else
+                                    local local_branches
+                                    local_branches=$(git branch --format="%(refname:short)" 2>/dev/null)
+                                    COMPREPLY=( $(compgen -W "${local_branches} -m --message" -- "${cur}") )
+                                fi
+                                ;;
+                            rename)
+                                if [[ "${prev_word}" == "--name" ]]; then COMPREPLY=()
+                                else
+                                    local local_branches
+                                    local_branches=$(git branch --format="%(refname:short)" 2>/dev/null)
+                                    COMPREPLY=( $(compgen -W "${local_branches} --name" -- "${cur}") )
+                                fi
+                                ;;
+                        esac
+                        ;;
+                    remote)
+                        if [[ "${COMP_WORDS[2]}" == "rm" ]]; then
+                            local remotes
+                            remotes=$(git remote 2>/dev/null)
+                            COMPREPLY=( $(compgen -W "${remotes}" -- "${cur}") )
+                        fi
+                        ;;
+                    join)
+                        local root_hash root_short hashes=""
+                        root_hash=$(git rev-list --max-parents=0 HEAD 2>/dev/null | head -n1 || true)
+                        [ -n "$root_hash" ] && root_short=$(git rev-parse --short "$root_hash" 2>/dev/null || true)
+                        while IFS= read -r hash; do
+                            [[ -z "$root_short" || "$hash" != "$root_short" ]] && hashes+="$hash "
+                        done < <(git log --pretty=format:'%h' -n 50 2>/dev/null)
+                        COMPREPLY=( $(compgen -W "--message ${hashes}" -- "${cur}") )
+                        ;;
+                    .)
+                        if [[ "$prev_word" == "-a" || "$prev_word" == "--all" ]]; then COMPREPLY=()
+                        else
+                            local unstaged_files filtered
+                            mapfile -t unstaged_files < <(_g_unstaged_files_relative)
+                            mapfile -t filtered < <(_g_filter_candidates_not_used "${unstaged_files[@]}")
+                            COMPREPLY=( $(compgen -W "${filtered[*]}" -- "${cur}") )
+                        fi ;;
+                    ..)
+                        if [[ "$prev_word" == "-a" || "$prev_word" == "--all" ]]; then COMPREPLY=()
+                        else
+                            local staged_files filtered
+                            mapfile -t staged_files < <(_g_staged_files_relative)
+                            mapfile -t filtered < <(_g_filter_candidates_not_used "${staged_files[@]}")
+                            COMPREPLY=( $(compgen -W "${filtered[*]}" -- "${cur}") )
+                        fi ;; 
+                esac
+                ;;
+        esac
+    }
+
+    g() {
+        if ! command -v "fzf" > /dev/null 2>&1; then
+            echo "error: missing fzf." >&2
+            return 1
+        fi
+
+        local cmd="${1:-}"
+        case "$cmd" in
+            -h|--help|"") g.__help__ ;;
+            info|undo|apply|.|..|","|",."|".,"|git) g.general "$@" ;;
+            new|list|ls|rm|edit|update|join|send|diff) g.commit "$@" ;;
+            branch) shift; g.branch "$@" ;;
+            tag|tags) shift; g.tag "$@" ;;
+            stage|staged) shift; g.stage "$@" ;;
+            conflict) shift; g.conflict "$@" ;;
+            remote) shift; g.remote "$@" ;;
+            *) g.commit "$@" ;;
+        esac
+    }
+
+    g.__init__() {
+        __compl g
+    }
+}

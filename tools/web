@@ -1,0 +1,453 @@
+#! /bin/bash
+
+__web__() {
+    __declare --dict ENV_WEB_BROWSERS ENV_WEB_MARKS ENV_WEB_PROTOCOLS ENV_WEB_ENGINES
+
+    __web_update_entry() {
+        local dict="$1" env="$2" key="$3" val="$4" mode="$5"
+        local current=""
+        
+        [[ "$dict" == "browsers" ]]  && current="${ENV_WEB_BROWSERS[$env]:-}"
+        [[ "$dict" == "marks" ]]     && current="${ENV_WEB_MARKS[$env]:-}"
+        [[ "$dict" == "protocols" ]] && current="${ENV_WEB_PROTOCOLS[$env]:-}"
+        [[ "$dict" == "engines" ]]   && current="${ENV_WEB_ENGINES[$env]:-}"
+        
+        local new_val=","
+        local IFS=','
+        for entry in $current; do
+            if [[ -n "$entry" ]]; then
+                if [[ "$mode" == "list_add" || "$mode" == "list_rm" ]]; then
+                    [[ "$entry" != "$key" ]] && new_val+="${entry},"
+                else
+                    [[ "$entry" != "${key}:"* ]] && new_val+="${entry},"
+                fi
+            fi
+        done
+        new_val="${new_val#,}"
+        
+        if [[ "$mode" == "set" && -n "$val" ]]; then
+            new_val+="${key}:${val},"
+        elif [[ "$mode" == "list_add" ]]; then
+            new_val+="${key},"
+        fi
+        
+        [[ "$dict" == "browsers" ]]  && __update "ENV_WEB_BROWSERS" "$env" "$new_val" "set"
+        [[ "$dict" == "marks" ]]     && __update "ENV_WEB_MARKS" "$env" "$new_val" "set"
+        [[ "$dict" == "protocols" ]] && __update "ENV_WEB_PROTOCOLS" "$env" "$new_val" "set"
+        [[ "$dict" == "engines" ]]   && __update "ENV_WEB_ENGINES" "$env" "$new_val" "set"
+    }
+
+    web.browsers() {
+        local cmd="$1"; shift
+        case "$cmd" in
+            set)
+                local browser="$1"; shift
+                local cmd_str="" priv_str="" t_env="$ENV"
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in
+                        -c|--command) cmd_str="$2"; shift ;;
+                        --command=*)  cmd_str="${1#*=}" ;;
+                        -p|--private) priv_str="$2"; shift ;;
+                        --private=*)  priv_str="${1#*=}" ;;
+                        -e|--env)     t_env="$2"; shift ;;
+                        --env=*)      t_env="${1#*=}" ;;
+                    esac
+                    shift
+                done
+                [[ -z "$browser" || -z "$t_env" ]] && return 1
+                __web_update_entry "browsers" "$t_env" "$browser" "${cmd_str}|${priv_str}" "set"
+                ;;
+            ls|la)
+                local t_env="$ENV" is_all=0
+                [[ "$cmd" == "la" ]] && is_all=1
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in
+                        -e|--env) t_env="$2"; shift ;;
+                        -a|--all) is_all=1 ;;
+                    esac
+                    shift
+                done
+                if (( is_all )); then
+                    for e in "${!ENV_WEB_BROWSERS[@]}"; do echo "[$e]: ${ENV_WEB_BROWSERS[$e]//,/ }"; done
+                else
+                    echo "${ENV_WEB_BROWSERS[$t_env]//,/ }"
+                fi
+                ;;
+            rm)
+                local browser="$1"; shift
+                local t_env="$ENV"
+                while [[ $# -gt 0 ]]; do case "$1" in -e|--env) t_env="$2"; shift;; esac; shift; done
+                __web_update_entry "browsers" "$t_env" "$browser" "" "rm"
+                ;;
+            prune)
+                local t_env="$ENV"
+                while [[ $# -gt 0 ]]; do case "$1" in -e|--env) t_env="$2"; shift;; esac; shift; done
+                __update "ENV_WEB_BROWSERS" "$t_env" "" "rm"
+                ;;
+        esac
+    }
+
+    web.marks() {
+        local cmd="$1"; shift
+        case "$cmd" in
+            set)
+                local name="$1"; shift
+                local url="" browser="" t_env="$ENV"
+                if [[ $# -gt 0 && "$1" != -* ]]; then url="$1"; shift; fi
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in
+                        -u|--url)     url="$2"; shift ;;
+                        -e|--env)     t_env="$2"; shift ;;
+                        -b|--browser) browser="$2"; shift ;;
+                    esac
+                    shift
+                done
+                [[ -z "$name" || -z "$url" || -z "$t_env" ]] && return 1
+                __web_update_entry "marks" "$t_env" "$name" "${url}|${browser}" "set"
+                ;;
+            ls)
+                local t_env="$ENV"
+                while [[ $# -gt 0 ]]; do case "$1" in -e|--env) t_env="$2"; shift;; esac; shift; done
+                echo "${ENV_WEB_MARKS[$t_env]//,/ }"
+                ;;
+            rm)
+                local name="$1"; shift
+                local t_env="$ENV"
+                while [[ $# -gt 0 ]]; do case "$1" in -e|--env) t_env="$2"; shift;; esac; shift; done
+                __web_update_entry "marks" "$t_env" "$name" "" "rm"
+                ;;
+        esac
+    }
+
+    web.protocols() {
+        local cmd="$1"; shift
+        case "$cmd" in
+            allow)
+                local proto="$1"; shift
+                local t_env="$ENV"
+                while [[ $# -gt 0 ]]; do case "$1" in -e|--env) t_env="$2"; shift;; esac; shift; done
+                __web_update_entry "protocols" "$t_env" "$proto" "" "list_add"
+                ;;
+            deny)
+                local proto="$1"; shift
+                local t_env="$ENV"
+                while [[ $# -gt 0 ]]; do case "$1" in -e|--env) t_env="$2"; shift;; esac; shift; done
+                __web_update_entry "protocols" "$t_env" "$proto" "" "list_rm"
+                ;;
+        esac
+    }
+
+    web.engines() {
+        local cmd="$1"; shift
+        case "$cmd" in
+            set)
+                local engine="$1"; shift
+                local url="" t_env="$ENV"
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in
+                        -u|--url) url="$2"; shift ;;
+                        -e|--env) t_env="$2"; shift ;;
+                    esac
+                    shift
+                done
+                __web_update_entry "engines" "$t_env" "$engine" "$url" "set"
+                ;;
+            ls|la)
+                local t_env="$ENV" is_all=0
+                [[ "$cmd" == "la" ]] && is_all=1
+                while [[ $# -gt 0 ]]; do case "$1" in -e|--env) t_env="$2"; shift;; -a|--all) is_all=1;; esac; shift; done
+                if (( is_all )); then
+                    for e in "${!ENV_WEB_ENGINES[@]}"; do echo "[$e]: ${ENV_WEB_ENGINES[$e]//,/ }"; done
+                else
+                    echo "${ENV_WEB_ENGINES[$t_env]//,/ }"
+                fi
+                ;;
+            rm)
+                local engine="$1"; shift
+                local t_env="$ENV"
+                while [[ $# -gt 0 ]]; do case "$1" in -e|--env) t_env="$2"; shift;; esac; shift; done
+                __web_update_entry "engines" "$t_env" "$engine" "" "rm"
+                ;;
+        esac
+    }
+
+    __web_get_browser_cmd() {
+        local b_name="$1" t_env="$2"
+        local b_data=",${ENV_WEB_BROWSERS[$t_env]:-}"
+        b_data="${b_data##*,${b_name}:}"
+        echo "${b_data%%,*}"
+    }
+
+    web.open() {
+        local mark="" browser="" t_env="$ENV"
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                -b|--browser) browser="$2"; shift ;;
+                -e|--env)     t_env="$2"; shift ;;
+                *)            [[ -z "$mark" ]] && mark="$1" ;;
+            esac
+            shift
+        done
+
+        local m_data=",${ENV_WEB_MARKS[$t_env]:-}"
+        m_data="${m_data##*,${mark}:}"
+        m_data="${m_data%%,*}"
+        
+        local url="${m_data%%|*}"
+        local m_browser="${m_data##*|}"
+
+        [[ -z "$url" ]] && return 1
+
+        local proto="${url%%://*}"
+        local allowed=",${ENV_WEB_PROTOCOLS[$t_env]:-http,https},"
+        [[ "$allowed" != *",${proto},"* ]] && return 1
+
+        local b_target="${browser:-${m_browser:-$BROWSER}}"
+        local b_cmd_data="$(__web_get_browser_cmd "$b_target" "$t_env")"
+        local b_cmd="${b_cmd_data%%|*}"
+        
+        [[ -z "$b_cmd" ]] && b_cmd="$b_target"
+        [[ -z "$b_cmd" ]] && b_cmd="xdg-open"
+
+        ( $b_cmd "$url" >/dev/null 2>&1 & )
+    }
+
+    web.search() {
+        local engine="" browser="" t_env="$ENV" terms=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                -s|--engine)  engine="$2"; shift ;;
+                -b|--browser) browser="$2"; shift ;;
+                -e|--env)     t_env="$2"; shift ;;
+                *)            
+                    local t="${1// /+}"
+                    terms="${terms}${terms:++}${t}" 
+                    ;;
+            esac
+            shift
+        done
+
+        engine="${engine:-$ENGINE}"
+        local e_data=",${ENV_WEB_ENGINES[$t_env]:-}"
+        e_data="${e_data##*,${engine}:}"
+        e_data="${e_data%%,*}"
+        [[ -z "$e_data" ]] && return 1
+
+        local url="${e_data//.../$terms}"
+
+        local b_target="${browser:-$BROWSER}"
+        local b_cmd_data="$(__web_get_browser_cmd "$b_target" "$t_env")"
+        local b_cmd="${b_cmd_data%%|*}"
+        
+        [[ -z "$b_cmd" ]] && b_cmd="$b_target"
+        [[ -z "$b_cmd" ]] && b_cmd="xdg-open"
+
+        ( $b_cmd "$url" >/dev/null 2>&1 & )
+    }
+
+    web.__help__() {
+        echo """ABOUT:
+    omni web bookmarks and search manager
+
+USAGE:
+    web <command> [args]
+
+COMMANDS:
+    browsers  set <browser> [-c <cmd>] [-p <priv_cmd>] [-e <env>]
+              ls|la [-e <env>]
+              rm <browser> [-e <env>]
+              prune [-e <env>]
+    marks     set <name> [<url>] [-u <url>] [-b <browser>] [-e <env>]
+              ls [-e <env>]
+              rm <name> [-e <env>]
+    protocols allow|deny <protocol> [-e <env>]
+    engines   set <engine> [-u <url>] [-e <env>]
+              ls|la [-e <env>]
+              rm <engine> [-e <env>]
+    open      <mark> [-b <browser>] [-e <env>]
+    search    <terms> [-s <engine>] [-b <browser>] [-e <env>]
+
+ALIASES:
+    w  <mark>             -> web open <mark>
+    wa <name> <url>       -> web marks set <name> <url>
+    wd <name>             -> web marks rm <name>
+    ws <terms> -s <engine> -> web search <terms> -s <engine>""" >&2
+    }
+
+    web() {
+        local cmd="$1"
+        [[ -z "$cmd" || "$cmd" == "--help" || "$cmd" == "-h" ]] && { web.__help__; return 0; }
+        shift
+        case "$cmd" in
+            browsers)  web.browsers "$@" ;;
+            marks)     web.marks "$@" ;;
+            protocols) web.protocols "$@" ;;
+            engines)   web.engines "$@" ;;
+            open)      web.open "$@" ;;
+            search)    web.search "$@" ;;
+        esac
+    }
+
+    web.__aliases__() {
+        alias w="web open"
+        alias wa="web marks set"
+        alias wd="web marks rm"
+        alias ws="web search"
+    }
+
+    web.__compl__() {
+        local cur="${COMP_WORDS[COMP_CWORD]}" prev="${COMP_WORDS[COMP_CWORD-1]}"
+        local cmd0="${COMP_WORDS[0]}"
+        COMPREPLY=()
+
+        local base_cmd="${COMP_WORDS[1]:-}"
+        local sub_cmd="${COMP_WORDS[2]:-}"
+        local target_cword=$COMP_CWORD
+
+        if [[ "$cmd0" == "w" ]]; then
+            base_cmd="open"
+            ((target_cword+=1))
+        elif [[ "$cmd0" == "wa" ]]; then
+            base_cmd="marks"
+            sub_cmd="set"
+            ((target_cword+=2))
+        elif [[ "$cmd0" == "wd" ]]; then
+            base_cmd="marks"
+            sub_cmd="rm"
+            ((target_cword+=2))
+        elif [[ "$cmd0" == "ws" ]]; then
+            base_cmd="search"
+            ((target_cword+=1))
+        fi
+
+        _get_keys() {
+            local dict="$1" e="$2"
+            local current=""
+            [[ "$dict" == "browsers" ]]  && current="${ENV_WEB_BROWSERS[$e]:-}"
+            [[ "$dict" == "marks" ]]     && current="${ENV_WEB_MARKS[$e]:-}"
+            [[ "$dict" == "protocols" ]] && current="${ENV_WEB_PROTOCOLS[$e]:-}"
+            [[ "$dict" == "engines" ]]   && current="${ENV_WEB_ENGINES[$e]:-}"
+            
+            local k="" IFS=','
+            for entry in $current; do
+                [[ -n "$entry" ]] && k+="${entry%%:*} "
+            done
+            echo "$k"
+        }
+
+        if [[ "$prev" == "-e" || "$prev" == "--env" ]]; then
+            COMPREPLY=( $(compgen -W "${!ENVS[*]}" -- "$cur") )
+            return 0
+        fi
+
+        if [[ "$cmd0" == "web" && "$target_cword" == 1 ]]; then
+            local marks="$(_get_keys marks "$ENV")"
+            COMPREPLY=( $(compgen -W "browsers marks protocols engines open search --help -h $marks" -- "$cur") )
+            return 0
+        fi
+
+        case "$base_cmd" in
+            browsers)
+                if [[ "$target_cword" == 2 ]]; then
+                    COMPREPLY=( $(compgen -W "set ls la rm prune" -- "$cur") )
+                    return 0
+                fi
+                if [[ "$sub_cmd" == "set" ]]; then
+                    if [[ "$cur" == -* ]]; then COMPREPLY=( $(compgen -W "-c --command -p --private -e --env" -- "$cur") ); fi
+                elif [[ "$sub_cmd" == "ls" || "$sub_cmd" == "la" ]]; then
+                    if [[ "$cur" == -* ]]; then COMPREPLY=( $(compgen -W "-e --env -a --all" -- "$cur") ); fi
+                elif [[ "$sub_cmd" == "rm" ]]; then
+                    if [[ "$target_cword" == 3 ]]; then
+                        COMPREPLY=( $(compgen -W "$(_get_keys browsers "$ENV")" -- "$cur") )
+                    elif [[ "$cur" == -* ]]; then
+                        COMPREPLY=( $(compgen -W "-e --env" -- "$cur") )
+                    fi
+                elif [[ "$sub_cmd" == "prune" ]]; then
+                    if [[ "$cur" == -* ]]; then COMPREPLY=( $(compgen -W "-e --env" -- "$cur") ); fi
+                fi
+                ;;
+            marks)
+                if [[ "$target_cword" == 2 ]]; then
+                    COMPREPLY=( $(compgen -W "set ls rm" -- "$cur") )
+                    return 0
+                fi
+                if [[ "$sub_cmd" == "set" ]]; then
+                    if [[ "$prev" == "-b" || "$prev" == "--browser" ]]; then
+                        COMPREPLY=( $(compgen -W "$(_get_keys browsers "$ENV")" -- "$cur") )
+                        return 0
+                    fi
+                    if [[ "$cur" == -* ]]; then COMPREPLY=( $(compgen -W "-u --url -e --env -b --browser" -- "$cur") ); fi
+                elif [[ "$sub_cmd" == "ls" ]]; then
+                    if [[ "$cur" == -* ]]; then COMPREPLY=( $(compgen -W "-e --env" -- "$cur") ); fi
+                elif [[ "$sub_cmd" == "rm" ]]; then
+                    if [[ "$target_cword" == 3 ]]; then
+                        COMPREPLY=( $(compgen -W "$(_get_keys marks "$ENV")" -- "$cur") )
+                    elif [[ "$cur" == -* ]]; then
+                        COMPREPLY=( $(compgen -W "-e --env" -- "$cur") )
+                    fi
+                fi
+                ;;
+            protocols)
+                if [[ "$target_cword" == 2 ]]; then
+                    COMPREPLY=( $(compgen -W "allow deny" -- "$cur") )
+                    return 0
+                fi
+                if [[ "$sub_cmd" == "allow" || "$sub_cmd" == "deny" ]]; then
+                    if [[ "$target_cword" == 3 && "$sub_cmd" == "deny" ]]; then
+                        COMPREPLY=( $(compgen -W "$(_get_keys protocols "$ENV")" -- "$cur") )
+                    elif [[ "$cur" == -* ]]; then
+                        COMPREPLY=( $(compgen -W "-e --env" -- "$cur") )
+                    fi
+                fi
+                ;;
+            engines)
+                if [[ "$target_cword" == 2 ]]; then
+                    COMPREPLY=( $(compgen -W "set ls la rm" -- "$cur") )
+                    return 0
+                fi
+                if [[ "$sub_cmd" == "set" ]]; then
+                    if [[ "$cur" == -* ]]; then COMPREPLY=( $(compgen -W "-u --url -e --env" -- "$cur") ); fi
+                elif [[ "$sub_cmd" == "ls" || "$sub_cmd" == "la" ]]; then
+                    if [[ "$cur" == -* ]]; then COMPREPLY=( $(compgen -W "-e --env -a --all" -- "$cur") ); fi
+                elif [[ "$sub_cmd" == "rm" ]]; then
+                    if [[ "$target_cword" == 3 ]]; then
+                        COMPREPLY=( $(compgen -W "$(_get_keys engines "$ENV")" -- "$cur") )
+                    elif [[ "$cur" == -* ]]; then
+                        COMPREPLY=( $(compgen -W "-e --env" -- "$cur") )
+                    fi
+                fi
+                ;;
+            search)
+                if [[ "$prev" == "-b" || "$prev" == "--browser" ]]; then
+                    COMPREPLY=( $(compgen -W "$(_get_keys browsers "$ENV")" -- "$cur") )
+                    return 0
+                fi
+                if [[ "$prev" == "-s" || "$prev" == "--engine" ]]; then
+                    COMPREPLY=( $(compgen -W "$(_get_keys engines "$ENV")" -- "$cur") )
+                    return 0
+                fi
+                if [[ "$cur" == -* ]]; then
+                    COMPREPLY=( $(compgen -W "-s --engine -b --browser -e --env" -- "$cur") )
+                fi
+                ;;
+            open|*)
+                if [[ "$prev" == "-b" || "$prev" == "--browser" ]]; then
+                    COMPREPLY=( $(compgen -W "$(_get_keys browsers "$ENV")" -- "$cur") )
+                    return 0
+                fi
+                if [[ "$cur" == -* ]]; then
+                    COMPREPLY=( $(compgen -W "-b --browser -e --env" -- "$cur") )
+                elif [[ "$target_cword" == 1 || ("$target_cword" == 2 && "$base_cmd" == "open") ]]; then
+                    COMPREPLY=( $(compgen -W "$(_get_keys marks "$ENV")" -- "$cur") )
+                fi
+                ;;
+        esac
+    }
+
+    web.__init__() {
+        __aliases web
+        __compl web
+        complete -o default -o bashdefault -F web.__compl__ w wa wd ws
+    }
+
+}

@@ -37,7 +37,7 @@ __web__() {
         [[ "$dict" == "engines" ]]   && __update "ENV_WEB_ENGINES" "$env" "$new_val" "set"
     }
 
-    web.browsers() {
+    __web__.browsers() {
         local cmd="$1"; shift
         case "$cmd" in
             set)
@@ -87,7 +87,7 @@ __web__() {
         esac
     }
 
-    web.marks() {
+    __web__.marks() {
         local cmd="$1"; shift
         case "$cmd" in
             set)
@@ -145,7 +145,7 @@ __web__() {
         esac
     }
 
-    web.protocols() {
+    __web__.protocols() {
         local cmd="$1"; shift
         case "$cmd" in
             allow)
@@ -163,7 +163,7 @@ __web__() {
         esac
     }
 
-    web.engines() {
+    __web__.engines() {
         local cmd="$1"; shift
         case "$cmd" in
             set)
@@ -204,7 +204,7 @@ __web__() {
         echo "${b_data%%,*}"
     }
 
-    web.open() {
+    __web__.open() {
         local mark="" browser="" t_env="$ENV"
         while [[ $# -gt 0 ]]; do
             case "$1" in
@@ -244,7 +244,7 @@ __web__() {
         ( $b_cmd "$url" >/dev/null 2>&1 & )
     }
 
-    web.search() {
+    __web__.search() {
         local engine="" browser="" t_env="$ENV" terms=""
         while [[ $# -gt 0 ]]; do
             case "$1" in
@@ -311,12 +311,12 @@ ALIASES:
         [[ -z "$cmd" || "$cmd" == "--help" || "$cmd" == "-h" ]] && { web.__help__; return 0; }
         shift
         case "$cmd" in
-            browsers)  web.browsers "$@" ;;
-            marks)     web.marks "$@" ;;
-            protocols) web.protocols "$@" ;;
-            engines)   web.engines "$@" ;;
-            open)      web.open "$@" ;;
-            search)    web.search "$@" ;;
+            browsers)  __web__.browsers "$@" ;;
+            marks)     __web__.marks "$@" ;;
+            protocols) __web__.protocols "$@" ;;
+            engines)   __web__.engines "$@" ;;
+            open)      __web__.open "$@" ;;
+            search)    __web__.search "$@" ;;
             *)         return 1 ;;
         esac
     }
@@ -477,12 +477,12 @@ ALIASES:
         case "$base_cmd" in
             browsers)
                 if [[ "$target_cword" == 2 ]]; then
-                    COMPREPLY=( $(compgen -W "set ls la rm prune" -- "$cur") )
+                    COMPREPLY=( $(compgen -W "set ls rm prune" -- "$cur") )
                     return 0
                 fi
                 if [[ "$sub_cmd" == "set" ]]; then
                     COMPREPLY=( $(compgen -W "--command --private --env $(_get_keys browsers "$ENV")" -- "$cur") )
-                elif [[ "$sub_cmd" == "ls" || "$sub_cmd" == "la" ]]; then
+                elif [[ "$sub_cmd" == "ls" ]]; then
                     COMPREPLY=( $(compgen -W "--env --all" -- "$cur") )
                 elif [[ "$sub_cmd" == "rm" ]]; then
                     COMPREPLY=( $(compgen -W "--env $(_get_keys browsers "$ENV")" -- "$cur") )
@@ -531,7 +531,7 @@ ALIASES:
                 fi
                 if [[ "$sub_cmd" == "set" ]]; then
                     COMPREPLY=( $(compgen -W "--url --env $(_get_keys engines "$ENV")" -- "$cur") )
-                elif [[ "$sub_cmd" == "ls" || "$sub_cmd" == "la" ]]; then
+                elif [[ "$sub_cmd" == "ls" ]]; then
                     COMPREPLY=( $(compgen -W "--env --all" -- "$cur") )
                 elif [[ "$sub_cmd" == "rm" ]]; then
                     COMPREPLY=( $(compgen -W "--env $(_get_keys engines "$ENV")" -- "$cur") )

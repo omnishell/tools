@@ -1,0 +1,1139 @@
+#! /bin/bash
+
+__wiki__() {
+
+    __wiki__.__help__() {
+        echo """ABOUT:
+    omni wiki generator and management tool
+
+USAGE:
+    wiki [args]
+
+COMMANDS:
+    ls                       List registered wikis
+    new/set                  <wiki> -p/--path <path> [-c <content>] [-d <dist>] [-t <templates>] [-s <static>]
+    rm                       <wiki>
+    pages ls                 <wiki>
+    pages new/set            <wiki> -p/--page <page_path> [-t/--template <template>]
+    pages rm                 <wiki> -p/--page <page_slug>
+    template ls              List registered templates
+    template new/set         <template> -p/--path <path>
+    template rm              <template>
+    refs ls                  List references
+    refs new/set             <ref> -l/--label <label> -v/--value <value>
+    refs rm                  <ref>
+    block ls                 List custom blocks
+    block new/set            <block> -c/--class <class>
+    block rm                 <block>
+    build                    <wiki>[.<page>] [--rebuild] [-c] [-d] [-t] [-s]
+
+FLAGS:
+  -h, --help    Show this help""" >&2
+    }
+
+    __wiki_save() {
+        local rcfile="${OMNIRC:-$HOME/.omnirc}"
+        local tmp_content="" line
+        
+        declare -p WIKIS >/dev/null 2>&1 || declare -g -a WIKIS=()
+        declare -p WIKI_VARS >/dev/null 2>&1 || declare -g -A WIKI_VARS=()
+        declare -p WIKI_PAGES >/dev/null 2>&1 || declare -g -A WIKI_PAGES=()
+        declare -p WIKI_PAGE_VARS >/dev/null 2>&1 || declare -g -A WIKI_PAGE_VARS=()
+        declare -p WIKI_TEMPLATES >/dev/null 2>&1 || declare -g -a WIKI_TEMPLATES=()
+        declare -p WIKI_TEMPLATE_VARS >/dev/null 2>&1 || declare -g -A WIKI_TEMPLATE_VARS=()
+        declare -p WIKI_REFS >/dev/null 2>&1 || declare -g -A WIKI_REFS=()
+        declare -p WIKI_BLOCKS >/dev/null 2>&1 || declare -g -A WIKI_BLOCKS=()
+
+        if [[ -f "$rcfile" ]]; then
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                if [[ "$line" == "declare -a WIKIS="* || "$line" == "declare -A WIKI_VARS="* || \
+                      "$line" == "declare -A WIKI_PAGES="* || "$line" == "declare -A WIKI_PAGE_VARS="* || \
+                      "$line" == "declare -a WIKI_TEMPLATES="* || "$line" == "declare -A WIKI_TEMPLATE_VARS="* || \
+                      "$line" == "declare -A WIKI_REFS="* || "$line" == "declare -A WIKI_BLOCKS="* ]]; then
+                    continue
+                fi
+                tmp_content+="$line"$'\n'
+            done < "$rcfile"
+        fi
+        
+        local wikis_str="" w
+        for w in "${WIKIS[@]}"; do wikis_str+="\"$w\" "; done
+        tmp_content+="declare -a WIKIS=($wikis_str)"$'\n'
+        tmp_content+="$(__wiki_serialize_assoc WIKI_VARS)"$'\n'
+        tmp_content+="$(__wiki_serialize_assoc WIKI_PAGES)"$'\n'
+        tmp_content+="$(__wiki_serialize_assoc WIKI_PAGE_VARS)"$'\n'
+        
+        local tmpls_str="" t
+        for t in "${WIKI_TEMPLATES[@]}"; do tmpls_str+="\"$t\" "; done
+        tmp_content+="declare -a WIKI_TEMPLATES=($tmpls_str)"$'\n'
+        tmp_content+="$(__wiki_serialize_assoc WIKI_TEMPLATE_VARS)"$'\n'
+        
+        tmp_content+="$(__wiki_serialize_assoc WIKI_REFS)"$'\n'
+        tmp_content+="$(__wiki_serialize_assoc WIKI_BLOCKS)"$'\n'
+        
+        printf "%s" "$tmp_content" > "$rcfile"
+    }
+
+    __wiki_serialize_assoc() {
+        local arr_name="$1" key val
+        local -n arr="$arr_name"
+        echo -n "declare -A ${arr_name}=("
+        for key in "${!arr[@]}"; do
+            val="${arr[$key]}"
+            echo -n "[\"$key\"]=\"${val//\"/\\\"}\" "
+        done
+        echo ")"
+    }
+
+    __handle_list_item() {
+        local indent="$1" ltype="$2" item_content="$3" line_prefix=""
+        while (( list_depth > 0 )) && (( indent < LIST_INDENTS[list_depth-1] )); do
+            list_depth=$((list_depth - 1))
+            line_prefix+="</li></${LIST_TYPES[list_depth]}>"
+        done
+        if (( list_depth == 0 )) || (( indent > LIST_INDENTS[list_depth-1] )); then
+            LIST_INDENTS[$list_depth]="$indent"
+            LIST_TYPES[$list_depth]="$ltype"
+            list_depth=$((list_depth + 1))
+            line_prefix+="<${ltype}><li>"
+        else
+            if [[ "${LIST_TYPES[list_depth-1]}" != "$ltype" ]]; then
+                line_prefix+="</li></${LIST_TYPES[list_depth-1]}><${ltype}><li>"
+                LIST_TYPES[$list_depth-1]="$ltype"
+            else
+                line_prefix+="</li><li>"
+            fi
+        fi
+        line="${line_prefix}${item_content}"
+    }
+
+    __ul() { __handle_list_item "$1" "ul" "$2"; }
+    __ol() { __handle_list_item "$1" "ol" "$2"; }
+
+    __close_lists() {
+        if (( list_depth > 0 )); then
+            while (( list_depth > 0 )); do
+                list_depth=$((list_depth - 1))
+                content+="</li></${LIST_TYPES[list_depth]}>"$'\n'
+            done
+            LIST_INDENTS=()
+            LIST_TYPES=()
+        fi
+    }
+
+    __parse_inline() {
+        if [[ "$line" != *[\`\*_+{\[]* ]]; then return; fi
+        
+        if [[ "$line" == *"\`"* ]]; then
+            local code_re='\`([^\`]+)\`'
+            while [[ "$line" =~ $code_re ]]; do
+                local full="${BASH_REMATCH[0]}" code="${BASH_REMATCH[1]}"
+                code="${code//&amp;/&}"; code="${code//&lt;/<}"; code="${code//&gt;/>}"; code="${code//&/&amp;}"; code="${code//</&lt;}"; code="${code//>/&gt;}"
+                line="${line/"$full"/<code>${code}</code>}"
+            done
+        fi
+        if [[ "$line" == *"**"* || "$line" == *"__"* ]]; then
+            while [[ "$line" == *"**"*"**"* ]]; do line="${line/\*\*/<strong>}"; line="${line/\*\*/<\/strong>}"; done
+            while [[ "$line" == *"__"*"__"* ]]; do line="${line/__/<strong>}"; line="${line/__/<\/strong>}"; done
+        fi
+        if [[ "$line" == *"++"* ]]; then
+            while [[ "$line" == *"++"*"++"* ]]; do line="${line/\+\+/<ins>}"; line="${line/\+\+/<\/ins>}"; done
+        fi
+        if [[ "$line" == *"_"*"_"* ]]; then
+            local em_re='(^|[[:space:][:punct:]])_([a-zA-Z0-9][^_]+)_([[:space:][:punct:]]|$)'
+            while [[ "$line" =~ $em_re ]]; do
+                local full="${BASH_REMATCH[0]}" pre="${BASH_REMATCH[1]}" t_content="${BASH_REMATCH[2]}" post="${BASH_REMATCH[3]}"
+                if [[ "$t_content" == *"/"* || "$t_content" == *"="* ]]; then break; fi
+                line="${line/"$full"/${pre}<em>${t_content}</em>${post}}"
+            done
+        fi
+        if [[ "$line" == *"{{:"* ]]; then
+            local topic_re='\{\{[[:space:]]*:([a-zA-Z0-9_.-]+):([a-zA-Z0-9_.-]+)[[:space:]]*\}\}'
+            while [[ "$line" =~ $topic_re ]]; do
+                local full="${BASH_REMATCH[0]}" topic="${BASH_REMATCH[1]}" label="${BASH_REMATCH[2]}"
+                local key="${topic}::${label}" target="${WIKI_REFS[$key]:-}"
+                if [[ -z "$target" ]]; then 
+                    line="${line/"$full"/<span class=\"wiki-topic-error\">${label}</span>}"
+                else
+                    local href=""
+                    if [[ "$target" == http://* || "$target" == https://* ]]; then href="$target"
+                    else
+                        local internal_path="${target%:*}" marker="${target##*:}"
+                        [[ "$target" != *":"* ]] && marker=""
+                        internal_path="${internal_path//./\/}"; href="/${internal_path}.html"
+                        [[ -n "$marker" ]] && href="${href}#${marker}"
+                    fi
+                    line="${line/"$full"/<a class=\"wiki-topic-${topic}\" href=\"${href}\">${label}</a>}"
+                fi
+            done
+        fi
+        if [[ "$line" == *"{{#"* || "$line" == *"{{="* ]]; then
+            local mark_re='\{\{\#([a-zA-Z0-9_.-]+)\}\}'
+            local anchor_re='\{\{\=([a-zA-Z0-9_.-]+)\}\}'
+            while [[ "$line" =~ $mark_re ]]; do line="${line/"${BASH_REMATCH[0]}"/<span id=\"${BASH_REMATCH[1]}\" class=\"wiki-mark\"></span>}"; done
+            while [[ "$line" =~ $anchor_re ]]; do line="${line/"${BASH_REMATCH[0]}"/<a href=\"#${BASH_REMATCH[1]}\">${BASH_REMATCH[1]}</a>}"; done
+        fi
+        if [[ "$line" == *"["* && "$line" == *"]("* ]]; then
+            local link_re='\[([^]]+)\]\(([^)]+)\)'
+            while [[ "$line" =~ $link_re ]]; do line="${line/"${BASH_REMATCH[0]}"/<a href=\"${BASH_REMATCH[2]}\">${BASH_REMATCH[1]}</a>}"; done
+        fi
+    }
+
+    __render_table() {
+        if [[ ${#table_buffer[@]} -lt 4 ]]; then return; fi
+        local sep_indices=() i
+        for (( i=0; i<${#table_buffer[@]}; i++ )); do
+            if [[ "${table_buffer[$i]}" =~ ^[-=_]{4,}[[:space:]]*$ ]]; then
+                sep_indices+=($i)
+            fi
+        done
+        if [[ ${#sep_indices[@]} -lt 2 ]]; then return; fi
+        
+        local sep1=${sep_indices[0]} sep2=${sep_indices[${#sep_indices[@]}-1]}
+        local header_line="${table_buffer[0]}" caption_line=""
+        
+        for (( i=sep2+1; i<${#table_buffer[@]}; i++ )); do
+            local cl="${table_buffer[$i]}"
+            cl="${cl#"${cl%%[![:space:]]*}"}"; cl="${cl%"${cl##*[![:space:]]}"}"
+            if [[ -n "$cl" ]]; then caption_line="$cl"; break; fi
+        done
+        
+        local starts=() space_count=0 len=${#header_line}
+        for (( i=0; i<len; i++ )); do
+            local c="${header_line:$i:1}"
+            if [[ "$c" == " " ]]; then space_count=$((space_count + 1))
+            else
+                if [[ $i -eq 0 ]] || [[ $space_count -ge 2 ]]; then starts+=($i); fi
+                space_count=0
+            fi
+        done
+        
+        local num_columns=${#starts[@]}
+        if [[ $num_columns -eq 0 ]]; then return; fi
+        
+        local table_html="<div class=\"captioned-table\">"$'\n'"<table class=\"custom-pre-table\">"$'\n'
+        table_html+="<thead>"$'\n'"<tr>"
+        
+        local j
+        for (( j=0; j<num_columns; j++ )); do
+            local st=${starts[$j]} en=$len
+            if [[ $((j + 1)) -lt num_columns ]]; then en=${starts[$((j+1))]}; fi
+            local f_len=$((en - st))
+            local field="${header_line:$st:$f_len}"
+            field="${field#"${field%%[![:space:]]*}"}"; field="${field%"${field##*[![:space:]]}"}"
+            
+            local temp_line="$line"
+            line="$field"
+            line="${line//&/&amp;}"; line="${line//</&lt;}"; line="${line//>/&gt;}"
+            
+            __parse_inline
+
+            field="$line"
+            line="$temp_line"
+            table_html+="<th><p>${field}</p></th>"
+        done
+        table_html+="</tr>"$'\n'"</thead>"$'\n'"<tbody>"$'\n'
+        
+        for (( i=sep1+1; i<sep2; i++ )); do
+            local row_str="${table_buffer[$i]}"
+            if [[ -z "${row_str//[[:space:]]/}" ]]; then continue; fi
+            local row_len=${#row_str}
+            table_html+="<tr>"
+            for (( j=0; j<num_columns; j++ )); do
+                local st=${starts[$j]} en=$row_len
+                if [[ $((j + 1)) -lt num_columns ]]; then en=${starts[$((j+1))]}; fi
+                local f_len=$((en - st))
+                local field=""
+                
+                if [[ $st -lt $row_len ]]; then
+                    field="${row_str:$st:$f_len}"
+                    field="${field#"${field%%[![:space:]]*}"}"; field="${field%"${field##*[![:space:]]}"}"
+                    
+                    local temp_line="$line"
+                    line="$field"
+                    line="${line//&/&amp;}"; line="${line//</&lt;}"; line="${line//>/&gt;}"
+                    
+                    __parse_inline
+
+                    field="$line"
+                    line="$temp_line"
+                fi
+                table_html+="<td><p>${field}</p></td>"
+            done
+            table_html+="</tr>"$'\n'
+        done
+        table_html+="</tbody>"$'\n'"</table>"$'\n'
+        
+        if [[ -n "$caption_line" ]]; then
+            caption_line="${caption_line//&/&amp;}"; caption_line="${caption_line//</&lt;}"; caption_line="${caption_line//>/&gt;}"
+            table_html+="<p><a href=\"#\" class=\"table-caption\">${caption_line}</a></p>"$'\n'
+        fi
+        table_html+="</div>"$'\n'
+        content+="${table_html}"
+    }
+
+    __build_featured_menu() {
+        __log "Building Featured Menu..." -t info -l wiki
+        local -a _featured_list=()
+
+        if declare -p WIKI_FEATURED >/dev/null 2>&1; then
+            if [[ "$(declare -p WIKI_FEATURED)" == "declare -a"* ]]; then _featured_list=("${WIKI_FEATURED[@]}")
+            else read -ra _featured_list <<< "$WIKI_FEATURED"; fi
+        else _featured_list=("${_global_pages[@]}"); fi
+
+        local fpage
+        for fpage in "${_featured_list[@]}"; do
+            local fname="${fpage##*.}"
+            fname="${fname^}"
+            WIKI_FEATURED_HTML+="<a href=\"/${fpage//./\/}.html\" class=\"menu-item\">${fname}</a>"$'\n'
+        done
+    }
+
+    __build_sidebar_menu() {
+        __log "Building Top Menu Tree..." -t info -l wiki
+
+        WIKI_MENU_HTML="<style>
+.sub-dir > details > summary::before { content: \"\" !important; display: none !important; }
+.sub-dir > details > summary { list-style: none !important; }
+.sub-dir > details > summary::-webkit-details-marker { display: none !important; }
+.sidebar-ul-inner, .sidebar-ul-inner-1 { padding-left: 0 !important; margin-left: 0 !important; }
+.sidebar-li { padding-left: 0 !important; margin-left: 0 !important; list-style: none !important; }
+.tree-line { font-family: 'IBM Plex Mono', monospace; white-space: pre; color: #888; font-size: 13px; }
+</style>"$'\n'"<ul class=\"sidebar-ul\">"$'\n'
+
+        local -a sorted_pages=()
+        if [ ${#_nested_pages[@]} -gt 0 ]; then
+            mapfile -t sorted_pages < <(printf "%s\n" "${_nested_pages[@]}" | sort)
+        fi
+
+        local -a current_path=() path_is_last=()
+        local idx
+
+        for idx in "${!sorted_pages[@]}"; do
+            local entry="${sorted_pages[$idx]}"
+            if [[ -z "$entry" ]]; then continue; fi
+            local next_entry="${sorted_pages[$((idx+1))]:-}"
+            
+            local -a parts=() next_parts=()
+            local OIFS="$IFS"; IFS='.'; read -ra parts <<< "$entry"; IFS='.'; read -ra next_parts <<< "$next_entry"; IFS="$OIFS"
+            
+            local page_name="${parts[${#parts[@]}-1]}"
+            local -a dir_parts=("${parts[@]:0:${#parts[@]}-1}")
+            local -a next_dir_parts=("${next_parts[@]:0:${#next_parts[@]}-1}")
+            
+            local common_len=0
+            while [[ $common_len -lt ${#current_path[@]} && $common_len -lt ${#dir_parts[@]} && "${current_path[$common_len]}" == "${dir_parts[$common_len]}" ]]; do
+                common_len=$((common_len + 1))
+            done
+
+            local i
+            for (( i=${#current_path[@]}-1; i>=common_len; i-- )); do WIKI_MENU_HTML+="</ul></details></li>"$'\n'; done
+
+            for (( i=common_len; i<${#dir_parts[@]}; i++ )); do
+                local dir="${dir_parts[$i]}"
+                local is_last_dir=1
+                
+                if [[ ${#next_parts[@]} -gt 0 ]]; then
+                    local match=1
+                    for (( m=0; m<=i; m++ )); do
+                        if [[ "${next_parts[$m]:-}" != "${dir_parts[$m]}" ]]; then match=0; break; fi
+                    done
+                    [[ $match -eq 1 ]] && is_last_dir=0
+                fi
+                
+                path_is_last[$i]=$is_last_dir
+
+                if [[ $i -gt 0 ]]; then
+                    local prefix=""
+                    for (( m=0; m<i; m++ )); do
+                        if [[ $m -eq 0 ]]; then prefix+="    "
+                        else
+                            if [[ ${path_is_last[$m]} -eq 1 ]]; then prefix+="    "
+                            else prefix+="│   "; fi
+                        fi
+                    done
+                    
+                    local branch
+                    if [[ $is_last_dir -eq 1 ]]; then branch="└── "
+                    else branch="├── "; fi
+                    WIKI_MENU_HTML+="<li class=\"sidebar-collapsible sub-dir\"><details open><summary><span class=\"tree-line\">${prefix}${branch}</span><span style=\"font-weight: bold;\">${dir}/</span></summary><ul class=\"sidebar-ul-inner\">"$'\n'
+                else
+                    WIKI_MENU_HTML+="<li class=\"sidebar-collapsible\"><details open><summary><span>${dir}</span></summary><ul class=\"sidebar-ul-inner\">"$'\n'
+                fi
+            done
+            
+            local is_last_file=1 match_dir=1
+            for (( m=0; m<${#dir_parts[@]}; m++ )); do
+                if [[ "${next_dir_parts[$m]:-}" != "${dir_parts[$m]}" ]]; then match_dir=0; break; fi
+            done
+            if (( match_dir == 1 )) && [[ ${#next_dir_parts[@]} -eq ${#dir_parts[@]} ]]; then is_last_file=0; fi
+
+            local prefix="" m
+            for (( m=0; m<${#dir_parts[@]}; m++ )); do
+                if [[ $m -eq 0 ]]; then prefix+="    "
+                else
+                    if [[ ${path_is_last[$m]} -eq 1 ]]; then prefix+="    "
+                    else prefix+="│   "; fi
+                fi
+            done
+
+            local fbranch
+            if [[ $is_last_file -eq 1 ]]; then fbranch="└── "
+            else fbranch="├── "; fi
+
+            local page_url
+            if [[ ${#dir_parts[@]} -gt 0 ]]; then
+                local prev_IFS="$IFS"
+                IFS='/'
+                local joined="${dir_parts[*]}"
+                IFS="$prev_IFS"
+                page_url="${joined}/${page_name}.html"
+            else
+                page_url="${page_name}.html"
+            fi
+            WIKI_MENU_HTML+="<li class=\"sidebar-li\"><span class=\"tree-line\">${prefix}${fbranch}</span><a href=\"/${page_url}\">${page_name}</a></li>"$'\n'
+            
+            current_path=("${dir_parts[@]}")
+        done
+
+        local i
+        for (( i=${#current_path[@]}-1; i>=0; i-- )); do WIKI_MENU_HTML+="</ul></details></li>"$'\n'; done
+        WIKI_MENU_HTML+="</ul>"$'\n'
+    }
+
+    __render_page() {
+        local file="$1" pagename="$2" out_path="$3" current_dir="$4"
+        local h_regex='^(#{1,6})\ +(.*)'
+        
+        local content="" in_frontmatter=0 title="$pagename" TOC_HTML="<ul class=\"toc\">"$'\n'
+        local in_code_block=0 in_custom_block="" list_depth=0 was_empty=0 ignore_next_empty=0 set_ignore_this_turn=0 line
+        local -a table_buffer=() KEYS_STACK=() LIST_INDENTS=() LIST_TYPES=() lines=()
+        
+        local -A PAGE_VARS=()
+        
+        mapfile -t lines < "$file"
+        
+        for line in "${lines[@]}"; do
+            set_ignore_this_turn=0
+            line="${line%$'\r'}"
+            
+            if (( in_frontmatter == 1 )); then
+                if [[ "$line" =~ ^---\s*$ ]]; then in_frontmatter=2; continue; fi
+                if [[ "$line" =~ ^([[:space:]]*)([a-zA-Z0-9_.-]+):(.*)$ ]]; then
+                    local indent="${#BASH_REMATCH[1]}" key="${BASH_REMATCH[2]}" val="${BASH_REMATCH[3]}"
+                    val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
+                    val="${val#\"}"; val="${val%\"}"; val="${val#\'}"; val="${val%\'}"
+                    local lvl=$((indent / 2))
+                    KEYS_STACK[lvl]="$key"
+                    local flat_key="page" i
+                    for ((i=0; i<=lvl; i++)); do flat_key+="."${KEYS_STACK[i]}; done
+                    if [[ -n "$val" ]]; then PAGE_VARS["$flat_key"]="$val"; fi
+                    if [[ "$key" == "title" && $lvl == 0 ]]; then title="$val"; fi
+                fi
+                continue
+            elif (( in_frontmatter == 0 )); then
+                if [[ "$line" =~ ^---\s*$ ]]; then in_frontmatter=1; continue; fi
+            fi
+            
+            if (( in_code_block == 1 )); then
+                if [[ "${line//[[:space:]]/}" == "\`\`\`" ]]; then
+                    content+="</code></pre>"$'\n'; in_code_block=0; ignore_next_empty=1
+                else
+                    line="${line//&amp;/&}"; line="${line//&lt;/<}"; line="${line//&gt;/>}"
+                    line="${line//&/&amp;}"; line="${line//</&lt;}"; line="${line//>/&gt;}"
+                    content+="${line}"$'\n'
+                fi
+                continue
+            fi
+            
+            if [[ -n "$in_custom_block" ]]; then
+                if [[ "${line//[[:space:]]/}" == "\`\`\`" ]]; then
+                    if [[ "$in_custom_block" == "table" ]]; then __render_table
+                    elif [[ -n "${WIKI_BLOCKS[$in_custom_block]:-}" ]]; then content+="</div>"$'\n'
+                    else content+="</${in_custom_block}>"$'\n'; fi
+                    in_custom_block=""; ignore_next_empty=1; continue
+                fi
+                if [[ "$in_custom_block" == "table" ]]; then table_buffer+=("$line"); continue; fi
+            else
+                if [[ "$line" == *"\`\`\`"* ]]; then
+                    if [[ "$line" =~ ^[[:space:]]*\`\`\`\{\{\ *([a-zA-Z0-9_-]+)\ *\}\}[[:space:]]*$ ]]; then
+                        local bname="${BASH_REMATCH[1]}"
+                        if [[ "$bname" == "table" ]]; then 
+                            in_custom_block="table"
+                            table_buffer=()
+                        elif [[ -n "${WIKI_BLOCKS[$bname]:-}" ]]; then
+                            in_custom_block="$bname"
+                            content+="<div class=\"${WIKI_BLOCKS[$bname]}\">"$'\n'
+                        else
+                            in_custom_block="${bname}"
+                            [[ "$bname" == "quote" ]] && in_custom_block="blockquote"
+                            content+="<${in_custom_block}>"$'\n'
+                        fi
+                        continue
+                    elif [[ "$line" =~ ^[[:space:]]*\`\`\`([a-zA-Z0-9_+-]*)[[:space:]]*$ ]]; then
+                        in_code_block=1
+                        local lang="${BASH_REMATCH[1]}"
+                        if [[ -n "$lang" ]]; then content+="<pre><code class=\"language-${lang}\">"$'\n'
+                        else content+="<pre><code>"$'\n'; fi
+                        continue
+                    fi
+                fi
+            fi
+
+            if [[ "$line" == *"{{"* ]]; then
+                if [[ "$line" =~ ^\s*\{\{\ *toc\ *\}\}\s*$ ]]; then line="{{TOC_PLACEHOLDER}}"; set_ignore_this_turn=1; fi
+                if [[ "$line" =~ ^\s*\{\{\ *files\ *\}\}\s*$ ]]; then line="{{FILES_PLACEHOLDER}}"; set_ignore_this_turn=1; fi
+            fi
+            
+            if [[ "$line" == "#"* ]]; then
+                if [[ "$line" =~ $h_regex ]]; then
+                    local h_level="${#BASH_REMATCH[1]}"
+                    local h_text="${BASH_REMATCH[2]}"
+                    local slug="${h_text,,}"
+                    slug="${slug// /_}"; slug="${slug//[^a-z0-9_-]/}"
+                    line="<h${h_level} id=\"${slug}\">${h_text}</h${h_level}>"
+                    TOC_HTML+="<li class=\"toc-h${h_level}\"><a href=\"#${slug}\">${h_text}</a></li>"$'\n'
+                    set_ignore_this_turn=1
+                fi
+            fi
+            
+            if [[ "$line" =~ ^([[:space:]]*)([-*+]|[0-9]+\.)[[:space:]]+(.*)$ ]]; then
+                local indent="${#BASH_REMATCH[1]}" marker="${BASH_REMATCH[2]}" item_content="${BASH_REMATCH[3]}"
+                if [[ "$marker" =~ ^[0-9] ]]; then __ol "$indent" "$item_content"; else __ul "$indent" "$item_content"; fi
+            else
+                if (( list_depth > 0 )); then
+                    if [[ -z "${line//[[:space:]]/}" ]]; then
+                        if [[ $ignore_next_empty -eq 1 ]]; then continue; fi
+                        if [[ $was_empty -eq 0 ]]; then content+="<br><br>"$'\n'; was_empty=1; fi
+                        continue
+                    fi
+                    if [[ ! "$line" =~ ^[[:space:]]+ ]]; then __close_lists; fi
+                fi
+            fi
+            
+            __parse_inline
+
+            if [[ -z "${line//[[:space:]]/}" ]]; then
+                if [[ $ignore_next_empty -eq 1 ]]; then :
+                elif [[ $was_empty -eq 0 ]]; then content+="<br><br>"$'\n'; was_empty=1; fi
+            else
+                content+="${line}"$'\n'; was_empty=0
+                if [[ $set_ignore_this_turn -eq 1 ]]; then ignore_next_empty=1; else ignore_next_empty=0; fi
+            fi
+        done
+        
+        __close_lists
+        TOC_HTML+="</ul>"
+        
+        local FILES_HTML="<ul class=\"dir-files\">"$'\n'"${DIR_FILES_MAP[$current_dir]}"$'\n'"</ul>"
+        
+        content="${content//\{\{TOC_PLACEHOLDER\}\}/$TOC_HTML}"
+        content="${content//\{\{FILES_PLACEHOLDER\}\}/$FILES_HTML}"
+        
+        local PAGE_LAYOUT="" skip=0 ll
+        for ll in "${layout_lines[@]}"; do
+            if [[ "$ll" == *"{%"* ]]; then
+                if [[ "$ll" =~ \{\%\ *if\ *\'([^\']+)\'\ *in\ *pagename\ *and\ *not\ *pagename\ *==\ *\"([^\"]+)\"\ *\%\} ]]; then
+                    if [[ "$pagename" == *"${BASH_REMATCH[1]}"* && "$pagename" != "${BASH_REMATCH[2]}" ]]; then skip=0; else skip=1; fi
+                    continue
+                fi
+                if [[ "$ll" =~ \{\%\ *if\ *\'([^\']+)\'\ *in\ *pagename\ *\%\} ]]; then
+                    if [[ "$pagename" == *"${BASH_REMATCH[1]}"* ]]; then skip=0; else skip=1; fi
+                    continue
+                fi
+                if [[ "$ll" =~ \{\%\ *else\ *\%\} ]]; then
+                    if [[ $skip -eq 0 ]]; then skip=1; else skip=0; fi
+                    continue
+                fi
+                if [[ "$ll" =~ \{\%\ *endif\ *\%\} ]]; then
+                    skip=0
+                    continue
+                fi
+                if [[ "$ll" =~ \{\%\ *(for|from|include|endfor).*\%\} ]]; then continue; fi
+            fi
+            
+            if (( skip == 1 )); then continue; fi
+            if [[ "$ll" == *"{{ render_menu_item"* || "$ll" == *"{{ item"* ]]; then continue; fi
+            
+            if [[ "$ll" == *"{{ page."* ]]; then
+                while [[ "$ll" =~ \{\{\ *page\.([a-zA-Z0-9_.-]+)\ *\}\} ]]; do
+                    local full_match="${BASH_REMATCH[0]}"
+                    local var_name="page.${BASH_REMATCH[1]}"
+                    local val="${PAGE_VARS[$var_name]}"
+                    ll="${ll//"$full_match"/$val}"
+                done
+            fi
+            
+            PAGE_LAYOUT+="$ll"$'\n'
+        done
+        
+        local rendered="${PAGE_LAYOUT//\{\{ body \}\}/$content}"
+        rendered="${rendered//\{\{ pagename \}\}/$title}"
+        rendered="${rendered//\{\{pagename\}\}/$title}"
+        
+        rendered="${rendered//\{\{ wiki.menu \}\}/$WIKI_MENU_HTML}"
+        rendered="${rendered//\{\{wiki.menu\}\}/$WIKI_MENU_HTML}"
+        rendered="${rendered//\{\{ menu \}\}/$WIKI_MENU_HTML}"
+        rendered="${rendered//\{\{menu\}\}/$WIKI_MENU_HTML}"
+        
+        rendered="${rendered//\{\{ wiki.featured \}\}/$WIKI_FEATURED_HTML}"
+        rendered="${rendered//\{\{wiki.featured\}\}/$WIKI_FEATURED_HTML}"
+        rendered="${rendered//\{\{ featured \}\}/$WIKI_FEATURED_HTML}"
+        rendered="${rendered//\{\{featured\}\}/$WIKI_FEATURED_HTML}"
+        
+        local year now
+        printf -v year "%(%Y)T" -1
+        printf -v now "%(%Y/%m/%d at %H:%M)T" -1
+        rendered="${rendered//\{\{ year \}\}/$year}"
+        rendered="${rendered//\{\{ now \}\}/$now}"
+        
+        printf "%s" "$rendered" > "$out_path"
+        __log "Rendered -> $out_path" -t success -l wiki
+    }
+
+    __wiki__.ls() {
+        declare -p WIKIS >/dev/null 2>&1 || { echo "No wikis registered."; return 0; }
+        local w
+        for w in "${WIKIS[@]}"; do
+            echo -e "$w -> ${WIKI_VARS[$w]:-}"
+        done
+    }
+
+    __wiki__.set() {
+        local w_name="$1"; shift
+        if [[ -z "$w_name" ]]; then __log "Missing wiki name." -t error -l wiki; return 1; fi
+        
+        local w_path="" w_cont="" w_dist="" w_tmpl="" w_stat=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                -p|--path) w_path="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+                -c|--contents) w_cont="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+                -d|--dist) w_dist="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+                -t|--template|--templates) w_tmpl="$2"; shift 2 ;;
+                -s|--static) w_stat="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        
+        local current_config="${WIKI_VARS[$w_name]:-}"
+        if [[ -z "$w_path" && -z "$current_config" ]]; then
+            __log "Path (-p) is mandatory for a new wiki." -t error -l wiki; return 1
+        fi
+        
+        if [[ -z "$current_config" ]]; then
+            [[ -n "$w_path" && -z "$w_cont" ]] && w_cont="${w_path}/content"
+            [[ -n "$w_path" && -z "$w_dist" ]] && w_dist="${w_path}/dist"
+            [[ -n "$w_path" && -z "$w_tmpl" ]] && w_tmpl="${w_path}/templates"
+            [[ -n "$w_path" && -z "$w_stat" ]] && w_stat="${w_path}/static"
+        else
+            local IFS=',' pair k v
+            for pair in $current_config; do
+                k="${pair%%:*}" v="${pair#*:}"
+                case "$k" in
+                    path) [[ -z "$w_path" ]] && w_path="$v" ;;
+                    content) [[ -z "$w_cont" ]] && w_cont="$v" ;;
+                    dist) [[ -z "$w_dist" ]] && w_dist="$v" ;;
+                    template) [[ -z "$w_tmpl" ]] && w_tmpl="$v" ;;
+                    static) [[ -z "$w_stat" ]] && w_stat="$v" ;;
+                esac
+            done
+        fi
+        
+        WIKI_VARS[$w_name]="path:${w_path},content:${w_cont},dist:${w_dist},template:${w_tmpl},static:${w_stat}"
+        
+        local exists=0 w
+        for w in "${WIKIS[@]}"; do
+            if [[ "$w" == "$w_name" ]]; then exists=1; break; fi
+        done
+        if [[ $exists -eq 0 ]]; then WIKIS+=("$w_name"); fi
+
+        if [[ -n "$w_cont" && -d "$w_cont" ]]; then
+            local abs_cont="$(cd "$w_cont" && pwd)"
+            local pages_arr=()
+            local restore_globstar=0
+            shopt -q globstar || restore_globstar=1
+            shopt -s globstar
+            for file in "$abs_cont"/**/*.md; do
+                [[ -f "$file" ]] || continue
+                local rel_path="${file#$abs_cont/}"
+                local no_ext="${rel_path%.md}"
+                local slug="${no_ext//\//.}"
+                pages_arr+=("$slug")
+                WIKI_PAGE_VARS["${w_name}::${slug}"]="path:${file}"
+            done
+            (( restore_globstar )) && shopt -u globstar
+            local joined_pages=$(IFS=','; echo "${pages_arr[*]}")
+            WIKI_PAGES[$w_name]="$joined_pages"
+        fi
+        
+        __wiki_save
+        __log "Configured wiki: $w_name" -t success -l wiki
+    }
+
+    __wiki__.rm() {
+        local w_name="$1"
+        if [[ -z "$w_name" ]]; then __log "Missing wiki name." -t error -l wiki; return 1; fi
+        
+        local i new_wikis=()
+        for i in "${WIKIS[@]}"; do
+            [[ "$i" != "$w_name" ]] && new_wikis+=("$i")
+        done
+        WIKIS=("${new_wikis[@]}")
+        unset 'WIKI_VARS[$w_name]' 'WIKI_PAGES[$w_name]'
+        
+        for i in "${!WIKI_PAGE_VARS[@]}"; do
+            [[ "$i" == "${w_name}::"* ]] && unset 'WIKI_PAGE_VARS[$i]'
+        done
+        
+        __wiki_save
+        __log "Removed wiki: $w_name" -t success -l wiki
+    }
+
+    __wiki__.template() {
+        local subcmd="$1"
+        case "$subcmd" in
+            ls)
+                declare -p WIKI_TEMPLATES >/dev/null 2>&1 || return 0
+                local t
+                for t in "${WIKI_TEMPLATES[@]}"; do echo "$t -> ${WIKI_TEMPLATE_VARS[$t]}"; done
+                ;;
+            new|set)
+                local tmpl="$2"; shift 2
+                if [[ -z "$tmpl" ]]; then __log "Missing template name." -t error -l wiki; return 1; fi
+                local t_path=""
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in -p|--path) t_path="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;; *) shift ;; esac
+                done
+                if [[ -z "$t_path" ]]; then __log "Missing path." -t error -l wiki; return 1; fi
+                local exists=0 t
+                for t in "${WIKI_TEMPLATES[@]}"; do [[ "$t" == "$tmpl" ]] && { exists=1; break; }; done
+                [[ $exists -eq 0 ]] && WIKI_TEMPLATES+=("$tmpl")
+                WIKI_TEMPLATE_VARS["$tmpl"]="$t_path"
+                __wiki_save
+                __log "Saved template $tmpl" -t success -l wiki
+                ;;
+            rm)
+                local tmpl="$2"
+                local i new_tmpls=()
+                for i in "${WIKI_TEMPLATES[@]}"; do
+                    [[ "$i" != "$tmpl" ]] && new_tmpls+=("$i")
+                done
+                WIKI_TEMPLATES=("${new_tmpls[@]}")
+                unset 'WIKI_TEMPLATE_VARS[$tmpl]'
+                __wiki_save
+                __log "Removed template $tmpl" -t success -l wiki
+                ;;
+            *) __log "Unknown template command: $subcmd" -t error -l wiki; return 1 ;;
+        esac
+    }
+
+    __wiki__.pages() {
+        local subcmd="$1" w_name="$2"
+        if [[ -z "$w_name" ]]; then __log "Missing wiki name." -t error -l wiki; return 1; fi
+        
+        case "$subcmd" in
+            ls)
+                local IFS=',' p
+                for p in ${WIKI_PAGES[$w_name]:-}; do
+                    echo "$p -> ${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
+                done
+                ;;
+            new|set)
+                shift 2
+                local p_path="" p_tmpl=""
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in
+                        -p|--page) p_path="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+                        -t|--template) p_tmpl="$2"; shift 2 ;;
+                        *) shift ;;
+                    esac
+                done
+                if [[ -z "$p_path" ]]; then __log "Missing page path." -t error -l wiki; return 1; fi
+                local slug="${p_path##*/}"; slug="${slug%.md}"
+                local pages="${WIKI_PAGES[$w_name]:-}"
+                if [[ -z "$pages" ]]; then pages="$slug"; else
+                    if [[ ",${pages}," != *",$slug,"* ]]; then pages="$pages,$slug"; fi
+                fi
+                WIKI_PAGES[$w_name]="$pages"
+                local var_str="path:${p_path}"
+                [[ -n "$p_tmpl" ]] && var_str+=",template:${p_tmpl}"
+                WIKI_PAGE_VARS["${w_name}::${slug}"]="$var_str"
+                __wiki_save
+                __log "Saved page $slug in $w_name" -t success -l wiki
+                ;;
+            rm)
+                shift 2
+                local p_slug=""
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in
+                        -p|--page) p_slug="$2"; shift 2 ;;
+                        *) shift ;;
+                    esac
+                done
+                if [[ -z "$p_slug" ]]; then __log "Missing page slug." -t error -l wiki; return 1; fi
+                local pages="${WIKI_PAGES[$w_name]:-}"
+                local IFS=',' new_pages=() p
+                for p in $pages; do
+                    [[ "$p" != "$p_slug" ]] && new_pages+=("$p")
+                done
+                local joined_pages=$(IFS=','; echo "${new_pages[*]}")
+                WIKI_PAGES[$w_name]="$joined_pages"
+                unset 'WIKI_PAGE_VARS['"${w_name}::${p_slug}"']'
+                __wiki_save
+                __log "Removed page $p_slug from $w_name" -t success -l wiki
+                ;;
+            *) __log "Unknown pages command: $subcmd" -t error -l wiki; return 1 ;;
+        esac
+    }
+
+    __wiki__.refs() {
+        local subcmd="$1"
+        case "$subcmd" in
+            ls)
+                declare -p WIKI_REFS >/dev/null 2>&1 || return 0
+                local k
+                for k in "${!WIKI_REFS[@]}"; do echo "$k -> ${WIKI_REFS[$k]}"; done
+                ;;
+            new|set)
+                local ref="$2"; shift 2
+                if [[ -z "$ref" ]]; then __log "Missing ref name." -t error -l wiki; return 1; fi
+                local lbl="" val=""
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in
+                        -l|--label) lbl="$2"; shift 2 ;;
+                        -v|--value) val="$2"; shift 2 ;;
+                        *) shift ;;
+                    esac
+                done
+                WIKI_REFS["${ref}::${lbl}"]="$val"
+                __wiki_save
+                __log "Saved reference ${ref}::${lbl}" -t success -l wiki
+                ;;
+            rm)
+                local ref="$2" k
+                for k in "${!WIKI_REFS[@]}"; do
+                    if [[ "$k" == "${ref}::"* ]]; then unset 'WIKI_REFS[$k]'; fi
+                done
+                __wiki_save
+                __log "Removed references for $ref" -t success -l wiki
+                ;;
+            *) __log "Unknown refs command: $subcmd" -t error -l wiki; return 1 ;;
+        esac
+    }
+
+    __wiki__.block() {
+        local subcmd="$1"
+        case "$subcmd" in
+            ls)
+                declare -p WIKI_BLOCKS >/dev/null 2>&1 || return 0
+                local k
+                for k in "${!WIKI_BLOCKS[@]}"; do echo "$k -> ${WIKI_BLOCKS[$k]}"; done
+                ;;
+            new|set)
+                local blk="$2"; shift 2
+                if [[ -z "$blk" ]]; then __log "Missing block name." -t error -l wiki; return 1; fi
+                local cls=""
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in -c|--class) cls="$2"; shift 2 ;; *) shift ;; esac
+                done
+                WIKI_BLOCKS["$blk"]="$cls"
+                __wiki_save
+                __log "Saved block $blk with class $cls" -t success -l wiki
+                ;;
+            rm)
+                local blk="$2"
+                unset 'WIKI_BLOCKS[$blk]'
+                __wiki_save
+                __log "Removed block $blk" -t success -l wiki
+                ;;
+            *) __log "Unknown block command: $subcmd" -t error -l wiki; return 1 ;;
+        esac
+    }
+
+    __wiki__.build() {
+        local restore_globstar=0 restore_nullglob=0 patsub_disabled=0
+        shopt -q globstar || restore_globstar=1
+        shopt -q nullglob || restore_nullglob=1
+        shopt -s globstar nullglob
+        if shopt -q patsub_replacement 2>/dev/null; then
+            shopt -u patsub_replacement 2>/dev/null || true; patsub_disabled=1
+        fi
+
+        declare -p WIKIS >/dev/null 2>&1 || declare -g -a WIKIS=()
+        local target="$1"; shift || true
+        local rebuild=0
+        if [[ "$target" == "--rebuild" || -z "$target" ]]; then 
+            rebuild=1
+            target="${WIKIS[0]}"
+        fi
+        
+        local o_cont="" o_dist="" o_tmpl="" o_stat=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                -c|--contents) o_cont="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+                -d|--dist) o_dist="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+                -t|--templates|--template) o_tmpl="$2"; shift 2 ;;
+                -s|--static) o_stat="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+                --rebuild) rebuild=1; shift ;;
+                *) shift ;;
+            esac
+        done
+
+        local w_name="${target%%.*}"
+        local p_name=""
+        if [[ "$target" == *.* ]]; then p_name="${target#*.}"; fi
+        
+        if [[ -z "$w_name" ]]; then
+            __log "No wiki specified or registered." -t error -l wiki
+            return 1
+        fi
+        
+        local w_config="${WIKI_VARS[$w_name]:-}"
+        if [[ -z "$w_config" ]]; then
+            __log "Wiki '$w_name' is not configured." -t error -l wiki
+            return 1
+        fi
+
+        local SOURCEDIR="" BUILDDIR="" TEMPLATEDIR="" STATICDIR=""
+        local IFS=',' pair k v
+        for pair in $w_config; do
+            k="${pair%%:*}" v="${pair#*:}"
+            case "$k" in
+                content) SOURCEDIR="$v" ;;
+                dist) BUILDDIR="$v" ;;
+                template) TEMPLATEDIR="$v" ;;
+                static) STATICDIR="$v" ;;
+            esac
+        done
+        
+        [[ -n "$o_cont" ]] && SOURCEDIR="$o_cont"
+        [[ -n "$o_dist" ]] && BUILDDIR="$o_dist"
+        [[ -n "$o_tmpl" ]] && TEMPLATEDIR="$o_tmpl"
+        [[ -n "$o_stat" ]] && STATICDIR="$o_stat"
+
+        unset _pages WIKI_MENU_HTML WIKI_FEATURED_HTML
+        declare -g -a _pages=()
+        declare -g WIKI_MENU_HTML="" WIKI_FEATURED_HTML=""
+
+        if [[ -z "${WIKI_PAGES[$w_name]:-}" ]]; then
+            __log "WIKI_PAGES empty for '$w_name'. Building dynamically from '$SOURCEDIR'." -t info -l wiki
+            for file in "$SOURCEDIR"/**/*.md; do
+                [[ -f "$file" ]] || continue
+                local rel_path="${file#$SOURCEDIR/}"
+                local no_ext="${rel_path%.md}"
+                local slug="${no_ext//\//.}"
+                _pages+=("$slug")
+                WIKI_PAGE_VARS["${w_name}::${slug}"]="path:${file}"
+            done
+        else
+            local IFS=',' p
+            for p in ${WIKI_PAGES[$w_name]}; do _pages+=("$p"); done
+        fi
+
+        __log "Cleaning and preparing environment for '$w_name'..." -t info -l wiki
+        rm -rf "$BUILDDIR"/* 2>/dev/null || true
+        mkdir -p "$BUILDDIR/_static"
+
+        if [ -d "$STATICDIR" ]; then cp -r "$STATICDIR"/* "$BUILDDIR/_static/" 2>/dev/null || true; fi
+
+        local -a _global_pages=() _nested_pages=()
+        local entry
+        for entry in "${_pages[@]}"; do
+            local -a parts=()
+            local OIFS="$IFS"; IFS='.'; read -ra parts <<< "$entry"; IFS="$OIFS"
+            if [ "${#parts[@]}" -ge 2 ]; then _nested_pages+=("$entry")
+            else _global_pages+=("${parts[0]}"); fi
+        done
+
+        __build_featured_menu
+        __build_sidebar_menu
+        
+        declare -gA DIR_FILES_MAP=()
+        local p
+        for p in "${_pages[@]}"; do
+            local p_name="${p##*.}" p_dir="" p_url=""
+            if [[ "$p" == *.* ]]; then
+                local p_dir_raw="${p%.*}"
+                p_dir="${p_dir_raw//./\/}"; p_url="${p_dir}/${p_name}.html"
+            else
+                p_dir="."; p_url="${p_name}.html"
+            fi
+            DIR_FILES_MAP["$p_dir"]+="<li><a href=\"/${p_url}\">${p_name}</a></li>"$'\n'
+        done
+        
+        local -a build_targets=()
+        if [[ -n "$p_name" ]]; then build_targets=("$p_name")
+        else build_targets=("${_pages[@]}"); fi
+
+        local file_count=0 p
+        for p in "${build_targets[@]}"; do
+            file_count=$((file_count + 1))
+            local p_vars="${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
+            local file="" p_tmpl=""
+            local IFS=',' pair k v
+            for pair in $p_vars; do
+                k="${pair%%:*}" v="${pair#*:}"
+                case "$k" in
+                    path) file="$v" ;;
+                    template) p_tmpl="$v" ;;
+                esac
+            done
+
+            if [[ ! -f "$file" ]]; then continue; fi
+
+            local page_tmpl_raw="${p_tmpl:-$TEMPLATEDIR}"
+            if [[ -n "${WIKI_TEMPLATE_VARS[$page_tmpl_raw]:-}" ]]; then
+                page_tmpl_raw="${WIKI_TEMPLATE_VARS[$page_tmpl_raw]}"
+            elif [[ -d "$page_tmpl_raw" ]]; then
+                page_tmpl_raw="${page_tmpl_raw}/layout.html"
+            fi
+            
+            if [[ ! -f "$page_tmpl_raw" ]]; then
+                __log "Template file missing for page $p at $page_tmpl_raw" -t error -l wiki
+                continue
+            fi
+            
+            local RAW_LAYOUT
+            read -r -d '' RAW_LAYOUT < "$page_tmpl_raw" || true
+            local -a layout_lines
+            mapfile -t layout_lines <<< "$RAW_LAYOUT"
+
+            local pagename="$p"
+            local out_path="$BUILDDIR/${p//./\/}.html"
+            local current_dir="${p%.*}"
+            if [[ "$current_dir" == "$p" ]]; then current_dir="."; fi
+            mkdir -p "${out_path%/*}"
+            
+            __render_page "$file" "$pagename" "$out_path" "$current_dir"
+        done
+
+        unset _pages WIKI_MENU_HTML WIKI_FEATURED_HTML DIR_FILES_MAP layout_lines
+
+        if (( restore_globstar )); then shopt -u globstar 2>/dev/null || true; fi
+        if (( restore_nullglob )); then shopt -u nullglob 2>/dev/null || true; fi
+        if (( patsub_disabled )); then shopt -s patsub_replacement 2>/dev/null || true; fi
+        return 0
+    }
+
+    wiki() {
+        local cmd="$1"; shift || true
+        case "$cmd" in
+            ls) __wiki__.ls "$@" ;;
+            new|set) __wiki__.set "$@" ;;
+            rm) __wiki__.rm "$@" ;;
+            pages) __wiki__.pages "$@" ;;
+            template) __wiki__.template "$@" ;;
+            refs) __wiki__.refs "$@" ;;
+            block) __wiki__.block "$@" ;;
+            build|--rebuild) __wiki__.build "$@" ;;
+            -h|--help|"") __wiki__.__help__ ;;
+            *) __log "Unknown command '$cmd' for wiki." -t error -l wiki; __wiki__.__help__; return 1 ;;
+        esac
+    }
+
+    wiki.__compl__() {
+        local cur="${COMP_WORDS[COMP_CWORD]}" prev="${COMP_WORDS[COMP_CWORD-1]}" base_cmd="${COMP_WORDS[1]:-}"
+        
+        if [[ "$prev" == "-t" || "$prev" == "--template" || "$prev" == "--templates" ]]; then
+            declare -p WIKI_TEMPLATES >/dev/null 2>&1 && COMPREPLY=( $(compgen -W "${WIKI_TEMPLATES[*]}" -- "$cur") )
+            return 0
+        fi
+
+        if [[ "${COMP_CWORD}" == 1 ]]; then
+            COMPREPLY=( $(compgen -W "ls new set rm pages template refs block build --rebuild --help -h" -- "$cur") )
+            return 0
+        fi
+        
+        case "$base_cmd" in
+            rm)
+                if [[ "${COMP_CWORD}" == 2 ]]; then
+                    declare -p WIKIS >/dev/null 2>&1 && COMPREPLY=( $(compgen -W "${WIKIS[*]}" -- "$cur") )
+                fi
+                ;;
+            new|set)
+                if [[ "$cur" == -* ]]; then
+                    COMPREPLY=( $(compgen -W "-p --path -c --contents -d --dist -t --templates --template -s --static" -- "$cur") )
+                elif [[ "${COMP_CWORD}" == 2 ]]; then
+                    declare -p WIKIS >/dev/null 2>&1 && COMPREPLY=( $(compgen -W "${WIKIS[*]}" -- "$cur") )
+                fi
+                ;;
+            pages)
+                local subcmd="${COMP_WORDS[2]:-}"
+                if [[ "${COMP_CWORD}" == 2 ]]; then
+                    COMPREPLY=( $(compgen -W "ls new set rm" -- "$cur") )
+                elif [[ "${COMP_CWORD}" == 3 ]]; then
+                    declare -p WIKIS >/dev/null 2>&1 && COMPREPLY=( $(compgen -W "${WIKIS[*]}" -- "$cur") )
+                elif [[ "$subcmd" == "new" || "$subcmd" == "set" ]]; then
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=( $(compgen -W "-p --page -t --template" -- "$cur") )
+                    fi
+                elif [[ "$subcmd" == "rm" ]]; then
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=( $(compgen -W "-p --page" -- "$cur") )
+                    elif [[ "$prev" == "-p" || "$prev" == "--page" ]]; then
+                        local w_name="${COMP_WORDS[3]}"
+                        declare -p WIKI_PAGES >/dev/null 2>&1 && COMPREPLY=( $(compgen -W "${WIKI_PAGES[$w_name]//,/ }" -- "$cur") )
+                    fi
+                fi
+                ;;
+            template)
+                local subcmd="${COMP_WORDS[2]:-}"
+                if [[ "${COMP_CWORD}" == 2 ]]; then
+                    COMPREPLY=( $(compgen -W "ls new set rm" -- "$cur") )
+                elif [[ "$subcmd" == "rm" && "${COMP_CWORD}" == 3 ]]; then
+                    declare -p WIKI_TEMPLATES >/dev/null 2>&1 && COMPREPLY=( $(compgen -W "${WIKI_TEMPLATES[*]}" -- "$cur") )
+                elif [[ "$subcmd" == "new" || "$subcmd" == "set" ]]; then
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=( $(compgen -W "-p --path" -- "$cur") )
+                    fi
+                fi
+                ;;
+            refs)
+                local subcmd="${COMP_WORDS[2]:-}"
+                if [[ "${COMP_CWORD}" == 2 ]]; then
+                    COMPREPLY=( $(compgen -W "ls new set rm" -- "$cur") )
+                elif [[ "$subcmd" == "rm" && "${COMP_CWORD}" == 3 ]]; then
+                    declare -p WIKI_REFS >/dev/null 2>&1 || return 0
+                    local k refs_list=""
+                    for k in "${!WIKI_REFS[@]}"; do refs_list+=" ${k%%::*}"; done
+                    COMPREPLY=( $(compgen -W "$refs_list" -- "$cur") )
+                elif [[ "$subcmd" == "new" || "$subcmd" == "set" ]]; then
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=( $(compgen -W "-l --label -v --value" -- "$cur") )
+                    fi
+                fi
+                ;;
+            block)
+                local subcmd="${COMP_WORDS[2]:-}"
+                if [[ "${COMP_CWORD}" == 2 ]]; then
+                    COMPREPLY=( $(compgen -W "ls new set rm" -- "$cur") )
+                elif [[ "$subcmd" == "rm" && "${COMP_CWORD}" == 3 ]]; then
+                    declare -p WIKI_BLOCKS >/dev/null 2>&1 && COMPREPLY=( $(compgen -W "${!WIKI_BLOCKS[*]}" -- "$cur") )
+                elif [[ "$subcmd" == "new" || "$subcmd" == "set" ]]; then
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=( $(compgen -W "-c --class" -- "$cur") )
+                    fi
+                fi
+                ;;
+            build)
+                if [[ "${COMP_CWORD}" == 2 ]]; then
+                    if [[ "$cur" == *.* ]]; then
+                        local w_name="${cur%%.*}"
+                        local p_prefix="${cur#*.}"
+                        local IFS=',' p pages=""
+                        for p in ${WIKI_PAGES[$w_name]:-}; do pages+=" ${w_name}.${p}"; done
+                        COMPREPLY=( $(compgen -W "$pages" -- "$cur") )
+                    else
+                        declare -p WIKIS >/dev/null 2>&1 && COMPREPLY=( $(compgen -W "${WIKIS[*]}" -- "$cur") )
+                    fi
+                elif [[ "$cur" == -* ]]; then
+                    COMPREPLY=( $(compgen -W "-c --contents -d --dist -t --templates --template -s --static" -- "$cur") )
+                fi
+                ;;
+        esac
+    }
+
+    __wiki__.__init__() {
+        __compl wiki
+    }
+}

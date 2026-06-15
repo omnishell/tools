@@ -660,7 +660,7 @@ EOF
                                 if [[ "$line" == "<<<<<<< "* ]]; then
                                     ((c++)); showing=1
                                     printf "----- Conflict %d (start line %d) -----\n" "$c" "$ln"
-                                fi
+                               fi
                                 ((showing)) && printf '%s\n' "$line"
                                 if [[ "$line" == ">>>>>>> "* ]]; then
                                     printf "----- End of conflict %d (line %d) -----\n\n" "$c" "$ln"
@@ -674,8 +674,7 @@ EOF
                         git_dir=$(git rev-parse --git-dir 2>/dev/null) || return 1
                         state_file="$git_dir/g-edit-state"
                         if [[ -z "$1" && ! -f "$state_file" ]]; then
-                            local files
-                            files=$(git diff --name-only --diff-filter=U)
+                            local files files=$(git diff --name-only --diff-filter=U)
                             [[ -z "$files" ]] && return 0
                         fi
                         if [[ ! -f "$state_file" ]]; then
@@ -723,7 +722,7 @@ EOF
                             for f in $selected; do
                                 local file="$f"
                                 [[ ! -f "$file" ]] && continue
-                                ! grep -q '^<<<<<<< ' "$file" 2>/dev/null && continue
+                                ! grep -q '^<<<<<<< ' "$file" 2>/dev/null && return 1
                                 local tmp_out tmp_ours tmp_theirs tmp_out=$(mktemp); tmp_ours=$(mktemp); tmp_theirs=$(mktemp)
                                 local in_conflict=0 side="" local -a block_lines ours_lines theirs_lines
                                 while IFS= read -r line || [[ -n "$line" ]]; do
@@ -734,7 +733,7 @@ EOF
                                         esac
                                     else
                                         case "$side" in
-                                            ours) if [[ "$line" == "=======" ]]; then block_lines+=("$line"); side="theirs" else block_lines+=("$line"); ours_lines+=("$line"); fi ;;
+                                            ours) if [[ "$line" == "=======" ]]; then block_lines+=("$line"); side="theirs"; else block_lines+=("$line"); ours_lines+=("$line"); fi ;;
                                             theirs)
                                                 block_lines+=("$line")
                                                 case "$line" in
@@ -783,7 +782,7 @@ EOF
                                     esac
                                 else
                                     case "$side" in
-                                        ours) if [[ "$line" == "=======" ]]; then block_lines+=("$line"); side="theirs" else block_lines+=("$line"); ours_lines+=("$line"); fi ;;
+                                        ours) if [[ "$line" == "=======" ]]; then block_lines+=("$line"); side="theirs"; else block_lines+=("$line"); ours_lines+=("$line"); fi ;;
                                         theirs)
                                             block_lines+=("$line")
                                             case "$line" in
@@ -836,122 +835,6 @@ EOF
                         base=$(git merge-base HEAD "$target_branch" 2>/dev/null) || return 1
                         out=$(git merge-tree "$base" HEAD "$target_branch") || true
                         if printf '%s\n' "$out" | grep -q '^<<<<<<< '; then echo "Merging WOULD produce conflicts."; else echo "Merging would NOT produce conflicts."; fi
-                        ;;
-                esac
-                ;;
-            remote)
-                shift
-                local subcmd="$1"
-                shift || true
-                case "$subcmd" in
-                    -h|--help) echo "Usage: g remote {new|ls|rm|update}" >&2; return 0 ;;
-                    new)
-                        local name="" url=""
-                        while [[ "$#" -gt 0 ]]; do
-                            case "$1" in
-                                --name) name="$2"; shift 2 ;;
-                                --url) url="$2"; shift 2 ;;
-                                *) if [[ -z "$name" ]]; then name="$1" elif [[ -z "$url" ]]; then url="$1" else return 1; fi; shift ;;
-                            esac
-                        done
-                        [[ -z "$name" || -z "$url" ]] && return 1
-                        git remote add "$name" "$url"
-                        ;;
-                    list|ls)
-                        local -A seen
-                        while read -r name url _; do
-                            if [[ -n "$name" && -z "${seen["$name $url"]:-}" ]]; then
-                                printf "%-20s %s\n" "$name" "$url"
-                                seen["$name $url"]=1
-                            fi
-                        done < <(git remote -v 2>/dev/null)
-                        ;;
-                    rm)
-                        local targets=()
-                        if [[ "$#" -eq 0 ]]; then
-                            local remotes=""
-                            while read -r name _; do remotes+="$name"$'\n'; done < <(git remote -v 2>/dev/null)
-                            remotes=$(printf '%s' "$remotes" | sort -u)
-                            [[ -z "$remotes" ]] && return 1
-                            local selected selected=$(printf '%s\n' "$remotes" | fzf --multi --prompt="Remotes to delete: " --height=40% --layout=reverse --border)
-                            [[ -z "$selected" ]] && return 1
-                            while IFS= read -r line; do [[ -n "$line" ]] && targets+=("${line%%$'\t'*}"); done <<< "$selected"
-                        else
-                            local arg
-                            for arg in "$@"; do
-                                if git remote get-url "$arg" >/dev/null 2>&1; then targets+=("$arg")
-                                else
-                                    while read -r name url _; do [[ "$url" == "$arg" ]] && targets+=("$name") ; done < <(git remote -v 2>/dev/null)
-                                fi
-                            done
-                        fi
-                        [[ "${#targets[@]}" -eq 0 ]] && return 1
-                        local uniq_targets=() t u skip
-                        for t in "${targets[@]}"; do
-                            skip=0
-                            for u in "${uniq_targets[@]}"; do [[ "$u" == "$t" ]] && skip=1 && break; done
-                            [[ "$skip" -eq 0 ]] && uniq_targets+=("$t")
-                        done
-                        echo "Remotes to delete: ${uniq_targets[*]}"
-                        read -r -p "Are you sure? [y/N] " ans
-                        case "$ans" in [Yy]*) ;; *) return 1 ;; esac
-                        local r
-                        for r in "${uniq_targets[@]}"; do git remote remove "$r"; done
-                        ;;
-                    update)
-                        local remote_name="$1"
-                        shift || true
-                        [[ -z "$remote_name" ]] && return 1
-                        local new_name="" new_url=""
-                        while [[ "$#" -gt 0 ]]; do
-                            case "$1" in --name) new_name="$2"; shift 2 ;; --url) new_url="$2"; shift 2 ;; *) return 1 ;; esac
-                        done
-                        [[ -z "$new_name" && -z "$new_url" ]] && return 1
-                        git remote get-url "$remote_name" >/dev/null 2>&1 || return 1
-                        if [[ -n "$new_name" && "$new_name" != "$remote_name" ]]; then
-                            git remote rename "$remote_name" "$new_name" || return 1
-                            remote_name="$new_name"
-                        fi
-                        if [[ -n "$new_url" ]]; then git remote set-url "$remote_name" "$new_url" || return 1; fi
-                        ;;
-                    *) return 1 ;;
-                esac
-                ;;
-            *)
-                local force_flag=0 target_ref="HEAD" subcmd="$cmd" all_sub_args=("$subcmd" "$@")
-                case "$subcmd" in
-                    new)
-                        local msg=""
-                        if [[ $# -eq 0 ]]; then read -e -p "Commit message: " msg
-                        else msg="$*"; fi
-                        [[ -z "$msg" ]] && return 1
-                        git commit -m "$msg"
-                        ;;
-                    list|ls) git log --oneline --decorate --graph -n "${1:-10}" ;;
-                    send)
-                        while [[ $# -gt 0 ]]; do
-                            case "$1" in -f|--force) force_flag=1 ;; *) target_ref="$1" ;; esac
-                            shift
-                        done
-                        if [[ "$force_flag" -eq 1 ]]; then git push --force origin "$target_ref"
-                        else git push origin "$target_ref"; fi
-                        ;;
-                    diff)
-                        if [[ $# -eq 0 ]]; then git diff; return; fi
-                        git difftool -t vimdiff -y "$@"
-                        ;;
-                    *)
-                        if [[ -n "$subcmd" && "$subcmd" == *":" ]]; then
-                            local msg="" ctx=""
-                            while [[ $# -gt 0 ]]; do
-                                case "$1" in -c|--context) ctx="$2"; shift 2 ;; *) msg+="${msg:+ }$1"; shift ;; esac
-                            done
-                            local type="${subcmd%:}" prefix="$type"
-                            [[ -n "$ctx" ]] && prefix="$type($ctx)"
-                            git commit -m "${prefix}: ${msg}"
-                            return
-                        fi
-                        return 1
                         ;;
                 esac
                 ;;

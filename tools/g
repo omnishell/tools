@@ -1,3 +1,5 @@
+#! /bin/bash
+
 __g__() {
     __g__.__help__() {
         cat <<'EOF' >&2
@@ -469,16 +471,6 @@ EOF
                         git difftool -t vimdiff -y "$@"
                         ;;
                     *)
-                        if [[ -n "$subcmd" && "$subcmd" == *":" ]]; then
-                            local msg="" ctx=""
-                            while [[ $# -gt 0 ]]; do
-                                case "$1" in -c|--context) ctx="$2"; shift 2 ;; *) msg+="${msg:+ }$1"; shift ;; esac
-                            done
-                            local type="${subcmd%:}" prefix="$type"
-                            [[ -n "$ctx" ]] && prefix="$type($ctx)"
-                            git commit -m "${prefix}: ${msg}"
-                            return
-                        fi
                         return 1
                         ;;
                 esac
@@ -735,7 +727,7 @@ EOF
                             for f in $selected; do
                                 local file="$f"
                                 [[ ! -f "$file" ]] && continue
-                                ! grep -q '^<<<<<<< ' "$file" 2>/dev/null && return 1
+                                ! grep -q '^<<<<<<< ' "$file" 2>/dev/null && continue
                                 local tmp_out tmp_ours tmp_theirs tmp_out=$(mktemp); tmp_ours=$(mktemp); tmp_theirs=$(mktemp)
                                 local in_conflict=0 side="" local -a block_lines ours_lines theirs_lines
                                 while IFS= read -r line || [[ -n "$line" ]]; do
@@ -863,7 +855,7 @@ EOF
                             case "$1" in
                                 --name) name="$2"; shift 2 ;;
                                 --url) url="$2"; shift 2 ;;
-                                *) if [[ -z "$name" ]]; then name="$1" elif [[ -z "$url" ]]; then url="$1" else return 1; fi; shift ;;
+                                *) if [[ -z "$name" ]]; then name="$1"; elif [[ -z "$url" ]]; then url="$1"; else return 1; fi; shift ;;
                             esac
                         done
                         [[ -z "$name" || -z "$url" ]] && return 1
@@ -927,26 +919,6 @@ EOF
                         if [[ -n "$new_url" ]]; then git remote set-url "$remote_name" "$new_url" || return 1; fi
                         ;;
                     *) return 1 ;;
-                esac
-                ;;
-            *)
-                local force_flag=0 target_ref="HEAD" subcmd="$cmd" all_sub_args=("$subcmd" "$@")
-                case "$subcmd" in
-                    new)
-                        local msg=""
-                        if [[ $# -eq 0 ]]; then read -e -p "Commit message: " msg
-                        else msg="$*"; fi
-                        [[ -z "$msg" ]] && return 1
-                        git commit -m "$msg"
-                        ;;
-                    list|ls) git log --oneline --decorate --graph -n "${1:-10}" ;;
-                    diff)
-                        if [[ $# -eq 0 ]]; then git diff; return; fi
-                        git difftool -t vimdiff -y "$@"
-                        ;;
-                    *)
-                        return 1
-                        ;;
                 esac
                 ;;
         esac

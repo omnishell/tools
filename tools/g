@@ -1,5 +1,3 @@
-#! /bin/bash
-
 __g__() {
     __g__.__help__() {
         cat <<'EOF' >&2
@@ -7,13 +5,14 @@ Usage: g <command> [options]
 
 Top-level commands:
   all           Stage all modified files
-  .             Stage files in current directory
+  .             Stage files in current directory (or show status if empty)
   ..            Unstage files
   ,             Checkout or create branch
   info          Show last commit and status
+  send          Push variations up to origin
   change        Manage present changes (info, ls, add, rm, undo, clean)
   history       Manage past history (session, join, rename, rm)
-  commit        Manage snapshots (new, ls, send, diff)
+  commit        Manage snapshots (new, ls, diff)
   branch        Manage branches (new, ls, rm, send, rename, rebase, ff, merge, sync)
   tag           Manage tags (new, ls, rm, send, edit)
   conflict      Manage conflicts (ls, resolve, diff)
@@ -28,11 +27,30 @@ EOF
         fi
 
         local cmd="${1:-}"
+        
+        if [[ -n "$cmd" && "$cmd" == *":" ]]; then
+            local subcmd="$cmd"
+            shift || true
+            local msg="" ctx=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in -c|--context) ctx="$2"; shift 2 ;; *) msg+="${msg:+ }$1"; shift ;; esac
+            done
+            local type="${subcmd%:}" prefix="$type"
+            [[ -n "$ctx" ]] && prefix="$type($ctx)"
+            git commit -m "${prefix}: ${msg}"
+            return
+        fi
+
         case "$cmd" in
             -h|--help|"") __g__.__help__ ;;
             all) git add -A ;;
             .) 
                 shift
+                if [[ $# -eq 0 ]]; then
+                    git log -1 --oneline
+                    git status
+                    return 0
+                fi
                 [[ "$1" == "-a" || "$1" == "--all" ]] && { git add -A; return 0; }
                 git add "${@:-.}" 
                 ;;
@@ -83,6 +101,10 @@ EOF
             info) 
                 git log -1 --oneline
                 git status 
+                ;;
+            send)
+                shift
+                git push origin "${1:-HEAD}"
                 ;;
             git) 
                 shift; git "$@" 
@@ -442,15 +464,6 @@ EOF
                         git commit -m "$msg"
                         ;;
                     list|ls) git log --oneline --decorate --graph -n "${1:-10}" ;;
-                    send)
-                        local force_flag=0 target_ref="HEAD"
-                        while [[ $# -gt 0 ]]; do
-                            case "$1" in -f|--force) force_flag=1 ;; *) target_ref="$1" ;; esac
-                            shift
-                        done
-                        if [[ "$force_flag" -eq 1 ]]; then git push --force origin "$target_ref"
-                        else git push origin "$target_ref"; fi
-                        ;;
                     diff)
                         if [[ $# -eq 0 ]]; then git diff; return; fi
                         git difftool -t vimdiff -y "$@"
@@ -660,7 +673,7 @@ EOF
                                 if [[ "$line" == "<<<<<<< "* ]]; then
                                     ((c++)); showing=1
                                     printf "----- Conflict %d (start line %d) -----\n" "$c" "$ln"
-                               fi
+                                fi
                                 ((showing)) && printf '%s\n' "$line"
                                 if [[ "$line" == ">>>>>>> "* ]]; then
                                     printf "----- End of conflict %d (line %d) -----\n\n" "$c" "$ln"
@@ -838,6 +851,104 @@ EOF
                         ;;
                 esac
                 ;;
+            remote)
+                shift
+                local subcmd="$1"
+                shift || true
+                case "$subcmd" in
+                    -h|--help) echo "Usage: g remote {new|ls|rm|update}" >&2; return 0 ;;
+                    new)
+                        local name="" url=""
+                        while [[ "$#" -gt 0 ]]; do
+                            case "$1" in
+                                --name) name="$2"; shift 2 ;;
+                                --url) url="$2"; shift 2 ;;
+                                *) if [[ -z "$name" ]]; then name="$1" elif [[ -z "$url" ]]; then url="$1" else return 1; fi; shift ;;
+                            esac
+                        done
+                        [[ -z "$name" || -z "$url" ]] && return 1
+                        git remote add "$name" "$url"
+                        ;;
+                    list|ls)
+                        local -A seen
+                        while read -r name url _; do
+                            if [[ -n "$name" && -z "${seen["$name $url"]:-}" ]]; then
+                                printf "%-20s %s\n" "$name" "$url"
+                                seen["$name $url"]=1
+                            fi
+                        done < <(git remote -v 2>/dev/null)
+                        ;;
+                    rm)
+                        local targets=()
+                        if [[ "$#" -eq 0 ]]; then
+                            local remotes=""
+                            while read -r name _; do remotes+="$name"$'\n'; done < <(git remote -v 2>/dev/null)
+                            remotes=$(printf '%s' "$remotes" | sort -u)
+                            [[ -z "$remotes" ]] && return 1
+                            local selected selected=$(printf '%s\n' "$remotes" | fzf --multi --prompt="Remotes to delete: " --height=40% --layout=reverse --border)
+                            [[ -z "$selected" ]] && return 1
+                            while IFS= read -r line; do [[ -n "$line" ]] && targets+=("${line%%$'\t'*}"); done <<< "$selected"
+                        else
+                            local arg
+                            for arg in "$@"; do
+                                if git remote get-url "$arg" >/dev/null 2>&1; then targets+=("$arg")
+                                else
+                                    while read -r name url _; do [[ "$url" == "$arg" ]] && targets+=("$name") ; done < <(git remote -v 2>/dev/null)
+                                fi
+                            done
+                        fi
+                        [[ "${#targets[@]}" -eq 0 ]] && return 1
+                        local uniq_targets=() t u skip
+                        for t in "${targets[@]}"; do
+                            skip=0
+                            for u in "${uniq_targets[@]}"; do [[ "$u" == "$t" ]] && skip=1 && break; done
+                            [[ "$skip" -eq 0 ]] && uniq_targets+=("$t")
+                        done
+                        echo "Remotes to delete: ${uniq_targets[*]}"
+                        read -r -p "Are you sure? [y/N] " ans
+                        case "$ans" in [Yy]*) ;; *) return 1 ;; esac
+                        local r
+                        for r in "${uniq_targets[@]}"; do git remote remove "$r"; done
+                        ;;
+                    update)
+                        local remote_name="$1"
+                        shift || true
+                        [[ -z "$remote_name" ]] && return 1
+                        local new_name="" new_url=""
+                        while [[ "$#" -gt 0 ]]; do
+                            case "$1" in --name) new_name="$2"; shift 2 ;; --url) new_url="$2"; shift 2 ;; *) return 1 ;; esac
+                        done
+                        [[ -z "$new_name" && -z "$new_url" ]] && return 1
+                        git remote get-url "$remote_name" >/dev/null 2>&1 || return 1
+                        if [[ -n "$new_name" && "$new_name" != "$remote_name" ]]; then
+                            git remote rename "$remote_name" "$new_name" || return 1
+                            remote_name="$new_name"
+                        fi
+                        if [[ -n "$new_url" ]]; then git remote set-url "$remote_name" "$new_url" || return 1; fi
+                        ;;
+                    *) return 1 ;;
+                esac
+                ;;
+            *)
+                local force_flag=0 target_ref="HEAD" subcmd="$cmd" all_sub_args=("$subcmd" "$@")
+                case "$subcmd" in
+                    new)
+                        local msg=""
+                        if [[ $# -eq 0 ]]; then read -e -p "Commit message: " msg
+                        else msg="$*"; fi
+                        [[ -z "$msg" ]] && return 1
+                        git commit -m "$msg"
+                        ;;
+                    list|ls) git log --oneline --decorate --graph -n "${1:-10}" ;;
+                    diff)
+                        if [[ $# -eq 0 ]]; then git diff; return; fi
+                        git difftool -t vimdiff -y "$@"
+                        ;;
+                    *)
+                        return 1
+                        ;;
+                esac
+                ;;
         esac
     }
 
@@ -881,10 +992,10 @@ EOF
         cur="${COMP_WORDS[COMP_CWORD]}"
         prev_word="${COMP_WORDS[COMP_CWORD-1]}"
 
-        local top_level_commands="--help doc: feat: fix: ref: test: change history commit branch remote tag conflict git . .. , all info"
+        local top_level_commands="--help doc: feat: fix: ref: test: change history commit branch remote tag conflict git . .. , all info send"
         local change_subcommands="info ls add rm undo clean --help"
         local history_subcommands="session join rename rm --help"
-        local commit_subcommands="new ls send diff --help"
+        local commit_subcommands="new ls diff --help"
         local branch_subcommands="new ls rm send rename rebase ff merge sync --help"
         local tag_subcommands="new ls rm send edit --help"
         local conflict_subcommands="ls resolve diff --help"
@@ -1034,7 +1145,7 @@ EOF
                     COMPREPLY=( $(compgen -W "--name --desc --message -m" -- "${cur}") )
                 elif [[ "${COMP_WORDS[1]}" == "remote" && "${COMP_WORDS[2]}" == "update" ]]; then
                     COMPREPLY=( $(compgen -W "--name --url" -- "${cur}") )
-                elif [[ "${COMP_WORDS[1]}" == "branch" && "${COMP_WORDS[2]}" == "rename" ]]; then
+                elif [[ "$W" == "branch" && "${COMP_WORDS[2]}" == "rename" ]]; then
                     COMPREPLY=( $(compgen -W "--name" -- "${cur}") )
                 fi
                 ;;

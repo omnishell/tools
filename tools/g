@@ -1,5 +1,7 @@
+#! /bin/bash
+
 __g__() {
-    g.__help__() {
+    __g__.__help__() {
         cat <<'EOF' >&2
 Usage: g <command> [options]
 
@@ -509,7 +511,7 @@ EOF
         esac
     }
 
-    g.__tag__() {
+    __g__.tag() {
         local sub="${1:-}"
         local all_args=("$@")
         shift || true
@@ -859,7 +861,7 @@ EOF
         esac
     }
 
-    g.__compl__() {
+    __g__.__compl__() {
         _g_unstaged_files_relative() {
             local repo_root file abs rel files=()
             repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return
@@ -1092,7 +1094,7 @@ EOF
         esac
     }
 
-    g.__init__() {
+    __g__.__init__() {
         __compl g
     }
 }

@@ -32,6 +32,29 @@ FLAGS:
   -h, --help    Show this help""" >&2
     }
 
+    __wiki_get_fm_val() {
+        local file="$1" key="$2" in_fm=0 line
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line="${line%$'\r'}"
+            if (( in_fm == 0 )); then
+                [[ "$line" =~ ^---\s*$ ]] && in_fm=1
+                continue
+            elif (( in_fm == 1 )); then
+                [[ "$line" =~ ^---\s*$ ]] && break
+                if [[ "$line" =~ ^[[:space:]]*${key}:(.*)$ ]]; then
+                    local val="${BASH_REMATCH[1]}"
+                    val="${val#"${val%%[![:space:]]*}"}"
+                    val="${val%"${val##*[![:space:]]}"}"
+                    val="${val#\"}"; val="${val%\"}"
+                    val="${val#\'}"; val="${val%\'}"
+                    printf "%s" "$val"
+                    return 0
+                fi
+            fi
+        done < "$file"
+        return 1
+    }
+
     __wiki_save() {
         local rcfile="${OMNIRC:-$HOME/.omnirc}"
         local tmp_content="" line
@@ -130,7 +153,7 @@ FLAGS:
         if [[ "$line" != *[\`\*_+{\[]* ]]; then return; fi
         
         if [[ "$line" == *"\`"* ]]; then
-            local code_re='\`([^\`]+)\`'
+            local code_re='`([^`]+)`'
             while [[ "$line" =~ $code_re ]]; do
                 local full="${BASH_REMATCH[0]}" code="${BASH_REMATCH[1]}"
                 code="${code//&amp;/&}"; code="${code//&lt;/<}"; code="${code//&gt;/>}"; code="${code//&/&amp;}"; code="${code//</&lt;}"; code="${code//>/&gt;}"
@@ -270,7 +293,9 @@ FLAGS:
         table_html+="</tbody>"$'\n'"</table>"$'\n'
         
         if [[ -n "$caption_line" ]]; then
-            caption_line="${caption_line//&/&amp;}"; caption_line="${caption_line//</&lt;}"; caption_line="${caption_line//>/&gt;}"
+            caption_line="${caption_line//&/&amp;}"
+            caption_line="${caption_line//</&lt;}"
+            caption_line="${caption_line//>/&gt;}"
             table_html+="<p><a href=\"#\" class=\"table-caption\">${caption_line}</a></p>"$'\n'
         fi
         table_html+="</div>"$'\n'
@@ -288,8 +313,11 @@ FLAGS:
 
         local fpage
         for fpage in "${_featured_list[@]}"; do
-            local fname="${fpage##*.}"
-            fname="${fname^}"
+            local fname="${PAGE_TITLES[$fpage]:-}"
+            if [[ -z "$fname" ]]; then
+                fname="${fpage##*.}"
+                fname="${fname^}"
+            fi
             WIKI_FEATURED_HTML+="<a href=\"/${fpage//./\/}.html\" class=\"menu-item\">${fname}</a>"$'\n'
         done
     }
@@ -396,7 +424,11 @@ FLAGS:
             else
                 page_url="${page_name}.html"
             fi
-            WIKI_MENU_HTML+="<li class=\"sidebar-li\"><span class=\"tree-line\">${prefix}${fbranch}</span><a href=\"/${page_url}\">${page_name}</a></li>"$'\n'
+
+            local disp_name="${PAGE_TITLES[$entry]:-}"
+            [[ -z "$disp_name" ]] && disp_name="$page_name"
+
+            WIKI_MENU_HTML+="<li class=\"sidebar-li\"><span class=\"tree-line\">${prefix}${fbranch}</span><a href=\"/${page_url}\">${disp_name}</a></li>"$'\n'
             
             current_path=("${dir_parts[@]}")
         done
@@ -413,7 +445,6 @@ FLAGS:
         local content="" in_frontmatter=0 title="$pagename" TOC_HTML="<ul class=\"toc\">"$'\n'
         local in_code_block=0 in_custom_block="" list_depth=0 was_empty=0 ignore_next_empty=0 set_ignore_this_turn=0 line
         local -a table_buffer=() KEYS_STACK=() LIST_INDENTS=() LIST_TYPES=() lines=()
-        
         local -A PAGE_VARS=()
         
         mapfile -t lines < "$file"
@@ -568,6 +599,15 @@ FLAGS:
                     ll="${ll//"$full_match"/$val}"
                 done
             fi
+
+            if [[ "$ll" == *"{{ wiki.frontmatter."* ]]; then
+                while [[ "$ll" =~ \{\{\ *wiki\.frontmatter\.([a-zA-Z0-9_.-]+)\ *\}\} ]]; do
+                    local full_match="${BASH_REMATCH[0]}"
+                    local var_name="page.${BASH_REMATCH[1]}"
+                    local val="${PAGE_VARS[$var_name]}"
+                    ll="${ll//"$full_match"/$val}"
+                done
+            fi
             
             PAGE_LAYOUT+="$ll"$'\n'
         done
@@ -631,7 +671,7 @@ FLAGS:
             [[ -n "$w_path" && -z "$w_tmpl" ]] && w_tmpl="${w_path}/templates"
             [[ -n "$w_path" && -z "$w_stat" ]] && w_stat="${w_path}/static"
         else
-            local IFS=',' pair k v
+            local OIFS="$IFS"; IFS=','
             for pair in $current_config; do
                 k="${pair%%:*}" v="${pair#*:}"
                 case "$k" in
@@ -642,6 +682,7 @@ FLAGS:
                     static) [[ -z "$w_stat" ]] && w_stat="$v" ;;
                 esac
             done
+            IFS="$OIFS"
         fi
         
         WIKI_VARS[$w_name]="path:${w_path},content:${w_cont},dist:${w_dist},template:${w_tmpl},static:${w_stat}"
@@ -655,18 +696,13 @@ FLAGS:
         if [[ -n "$w_cont" && -d "$w_cont" ]]; then
             local abs_cont="$(cd "$w_cont" && pwd)"
             local pages_arr=()
-            local restore_globstar=0
-            shopt -q globstar || restore_globstar=1
-            shopt -s globstar
-            for file in "$abs_cont"/**/*.md; do
-                [[ -f "$file" ]] || continue
+            while IFS= read -r -d '' file; do
                 local rel_path="${file#$abs_cont/}"
                 local no_ext="${rel_path%.md}"
                 local slug="${no_ext//\//.}"
                 pages_arr+=("$slug")
                 WIKI_PAGE_VARS["${w_name}::${slug}"]="path:${file}"
-            done
-            (( restore_globstar )) && shopt -u globstar
+            done < <(find "$abs_cont" -type f -name "*.md" -print0)
             local joined_pages=$(IFS=','; echo "${pages_arr[*]}")
             WIKI_PAGES[$w_name]="$joined_pages"
         fi
@@ -738,10 +774,12 @@ FLAGS:
         
         case "$subcmd" in
             ls)
-                local IFS=',' p
+                local OIFS="$IFS"; IFS=','
+                local p
                 for p in ${WIKI_PAGES[$w_name]:-}; do
                     echo "$p -> ${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
                 done
+                IFS="$OIFS"
                 ;;
             new|set)
                 shift 2
@@ -777,11 +815,13 @@ FLAGS:
                 done
                 if [[ -z "$p_slug" ]]; then __log "Missing page slug." -t error -l wiki; return 1; fi
                 local pages="${WIKI_PAGES[$w_name]:-}"
-                local IFS=',' new_pages=() p
+                local OIFS="$IFS"; IFS=','
+                local new_pages=() p
                 for p in $pages; do
                     [[ "$p" != "$p_slug" ]] && new_pages+=("$p")
                 done
                 local joined_pages=$(IFS=','; echo "${new_pages[*]}")
+                IFS="$OIFS"
                 WIKI_PAGES[$w_name]="$joined_pages"
                 unset 'WIKI_PAGE_VARS['"${w_name}::${p_slug}"']'
                 __wiki_save
@@ -856,14 +896,6 @@ FLAGS:
     }
 
     __wiki__.build() {
-        local restore_globstar=0 restore_nullglob=0 patsub_disabled=0
-        shopt -q globstar || restore_globstar=1
-        shopt -q nullglob || restore_nullglob=1
-        shopt -s globstar nullglob
-        if shopt -q patsub_replacement 2>/dev/null; then
-            shopt -u patsub_replacement 2>/dev/null || true; patsub_disabled=1
-        fi
-
         declare -p WIKIS >/dev/null 2>&1 || declare -g -a WIKIS=()
         local target="$1"; shift || true
         local rebuild=0
@@ -900,7 +932,8 @@ FLAGS:
         fi
 
         local SOURCEDIR="" BUILDDIR="" TEMPLATEDIR="" STATICDIR=""
-        local IFS=',' pair k v
+        local OIFS="$IFS"; IFS=','
+        local pair k v
         for pair in $w_config; do
             k="${pair%%:*}" v="${pair#*:}"
             case "$k" in
@@ -910,30 +943,45 @@ FLAGS:
                 static) STATICDIR="$v" ;;
             esac
         done
+        IFS="$OIFS"
         
         [[ -n "$o_cont" ]] && SOURCEDIR="$o_cont"
         [[ -n "$o_dist" ]] && BUILDDIR="$o_dist"
         [[ -n "$o_tmpl" ]] && TEMPLATEDIR="$o_tmpl"
         [[ -n "$o_stat" ]] && STATICDIR="$o_stat"
 
-        unset _pages WIKI_MENU_HTML WIKI_FEATURED_HTML
+        unset _pages WIKI_MENU_HTML WIKI_FEATURED_HTML PAGE_TITLES
         declare -g -a _pages=()
         declare -g WIKI_MENU_HTML="" WIKI_FEATURED_HTML=""
+        declare -gA PAGE_TITLES=()
 
         if [[ -z "${WIKI_PAGES[$w_name]:-}" ]]; then
             __log "WIKI_PAGES empty for '$w_name'. Building dynamically from '$SOURCEDIR'." -t info -l wiki
-            for file in "$SOURCEDIR"/**/*.md; do
-                [[ -f "$file" ]] || continue
+            while IFS= read -r -d '' file; do
                 local rel_path="${file#$SOURCEDIR/}"
                 local no_ext="${rel_path%.md}"
                 local slug="${no_ext//\//.}"
                 _pages+=("$slug")
                 WIKI_PAGE_VARS["${w_name}::${slug}"]="path:${file}"
-            done
+            done < <(find "$SOURCEDIR" -type f -name "*.md" -print0)
         else
-            local IFS=',' p
+            local OIFS="$IFS"; IFS=','
+            local p
             for p in ${WIKI_PAGES[$w_name]}; do _pages+=("$p"); done
+            IFS="$OIFS"
         fi
+
+        local p
+        for p in "${_pages[@]}"; do
+            local p_vars="${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
+            local file="${p_vars##*path:}"
+            file="${file%%,*}"
+            local fm_title=""
+            if [[ -f "$file" ]]; then
+                fm_title="$(__wiki_get_fm_val "$file" "title" || true)"
+            fi
+            PAGE_TITLES["$p"]="$fm_title"
+        done
 
         __log "Cleaning and preparing environment for '$w_name'..." -t info -l wiki
         rm -rf "$BUILDDIR"/* 2>/dev/null || true
@@ -954,28 +1002,29 @@ FLAGS:
         __build_sidebar_menu
         
         declare -gA DIR_FILES_MAP=()
-        local p
         for p in "${_pages[@]}"; do
-            local p_name="${p##*.}" p_dir="" p_url=""
+            local map_p_name="${p##*.}" map_p_dir="" map_p_url=""
+            local disp_name="${PAGE_TITLES[$p]:-}"
+            [[ -z "$disp_name" ]] && disp_name="$map_p_name"
             if [[ "$p" == *.* ]]; then
                 local p_dir_raw="${p%.*}"
-                p_dir="${p_dir_raw//./\/}"; p_url="${p_dir}/${p_name}.html"
+                map_p_dir="${p_dir_raw//./\/}"; map_p_url="${map_p_dir}/${map_p_name}.html"
             else
-                p_dir="."; p_url="${p_name}.html"
+                map_p_dir="."; map_p_url="${map_p_name}.html"
             fi
-            DIR_FILES_MAP["$p_dir"]+="<li><a href=\"/${p_url}\">${p_name}</a></li>"$'\n'
+            DIR_FILES_MAP["$map_p_dir"]+="<li><a href=\"/${map_p_url}\">${disp_name}</a></li>"$'\n'
         done
         
         local -a build_targets=()
         if [[ -n "$p_name" ]]; then build_targets=("$p_name")
         else build_targets=("${_pages[@]}"); fi
 
-        local file_count=0 p
+        local file_count=0
         for p in "${build_targets[@]}"; do
             file_count=$((file_count + 1))
             local p_vars="${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
             local file="" p_tmpl=""
-            local IFS=',' pair k v
+            local OIFS="$IFS"; IFS=','
             for pair in $p_vars; do
                 k="${pair%%:*}" v="${pair#*:}"
                 case "$k" in
@@ -983,6 +1032,7 @@ FLAGS:
                     template) p_tmpl="$v" ;;
                 esac
             done
+            IFS="$OIFS"
 
             if [[ ! -f "$file" ]]; then continue; fi
 
@@ -1012,11 +1062,7 @@ FLAGS:
             __render_page "$file" "$pagename" "$out_path" "$current_dir"
         done
 
-        unset _pages WIKI_MENU_HTML WIKI_FEATURED_HTML DIR_FILES_MAP layout_lines
-
-        if (( restore_globstar )); then shopt -u globstar 2>/dev/null || true; fi
-        if (( restore_nullglob )); then shopt -u nullglob 2>/dev/null || true; fi
-        if (( patsub_disabled )); then shopt -s patsub_replacement 2>/dev/null || true; fi
+        unset _pages WIKI_MENU_HTML WIKI_FEATURED_HTML DIR_FILES_MAP layout_lines PAGE_TITLES
         return 0
     }
 
@@ -1077,11 +1123,20 @@ FLAGS:
 
                 req_path="${req_path%%\?*}"
                 req_path="${req_path%%\#*}"
+                
+                req_path="${req_path//+/ }"
+                printf -v req_path "%b" "${req_path//%/\\x}"
+
                 req_path="${req_path#/}"
                 req_path="${req_path//..\//}"
                 [[ -z "$req_path" ]] && req_path="index.html"
 
                 target="${BUILDDIR}/${req_path}"
+
+                if [[ -d "$target" ]]; then
+                    target="${target%/}/index.html"
+                fi
+
                 if [[ -f "$target" ]]; then
                     size=$(wc -c < "$target")
                     

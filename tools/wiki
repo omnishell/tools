@@ -1084,7 +1084,19 @@ FLAGS:
                 target="${BUILDDIR}/${req_path}"
                 if [[ -f "$target" ]]; then
                     size=$(wc -c < "$target")
-                    printf "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" "$size"
+                    
+                    local ctype="text/html"
+                    case "$target" in
+                        *.css) ctype="text/css" ;;
+                        *.js)  ctype="application/javascript" ;;
+                        *.png) ctype="image/png" ;;
+                        *.jpg|*.jpeg) ctype="image/jpeg" ;;
+                        *.svg) ctype="image/svg+xml" ;;
+                        *.ico) ctype="image/x-icon" ;;
+                        *.json|*.webmanifest) ctype="application/json" ;;
+                    esac
+                    
+                    printf "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nContent-Type: %s\r\nConnection: close\r\n\r\n" "$size" "$ctype"
                     cat "$target"
                 else
                     printf "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot Found"

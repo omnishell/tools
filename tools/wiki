@@ -26,6 +26,7 @@ COMMANDS:
     block new/set            <block> -c/--class <class>
     block rm                 <block>
     build                    <wiki>[.<page>] [--rebuild] [-c] [-d] [-t] [-s]
+    serve                    <wiki> [-p/--port <port>]
 
 FLAGS:
   -h, --help    Show this help""" >&2
@@ -46,10 +47,14 @@ FLAGS:
 
         if [[ -f "$rcfile" ]]; then
             while IFS= read -r line || [[ -n "$line" ]]; do
-                if [[ "$line" == "declare -a WIKIS="* || "$line" == "declare -A WIKI_VARS="* || \
-                      "$line" == "declare -A WIKI_PAGES="* || "$line" == "declare -A WIKI_PAGE_VARS="* || \
-                      "$line" == "declare -a WIKI_TEMPLATES="* || "$line" == "declare -A WIKI_TEMPLATE_VARS="* || \
-                      "$line" == "declare -A WIKI_REFS="* || "$line" == "declare -A WIKI_BLOCKS="* ]]; then
+                if [[ "$line" == "declare -a WIKIS="* || \
+                      "$line" == "declare -A WIKI_VARS="* || \
+                      "$line" == "declare -A WIKI_PAGES="* || \
+                      "$line" == "declare -A WIKI_PAGE_VARS="* || \
+                      "$line" == "declare -a WIKI_TEMPLATES="* || \
+                      "$line" == "declare -A WIKI_TEMPLATE_VARS="* || \
+                      "$line" == "declare -A WIKI_REFS="* || \
+                      "$line" == "declare -A WIKI_BLOCKS="* ]]; then
                     continue
                 fi
                 tmp_content+="$line"$'\n'
@@ -1015,6 +1020,79 @@ FLAGS:
         return 0
     }
 
+    __wiki__.serve() {
+        local w_name="$1"
+        shift || true
+        local port="8080"
+        
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                -p|--port) port="$2"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+
+        if [[ -z "$w_name" ]]; then
+            __log "No wiki specified." -t error -l wiki
+            return 1
+        fi
+
+        local w_config="${WIKI_VARS[$w_name]:-}"
+        if [[ -z "$w_config" ]]; then
+            __log "Wiki '$w_name' is not configured." -t error -l wiki
+            return 1
+        fi
+
+        local BUILDDIR=""
+        local IFS=',' pair k v
+        for pair in $w_config; do
+            k="${pair%%:*}" v="${pair#*:}"
+            [[ "$k" == "dist" ]] && BUILDDIR="$v"
+        done
+
+        if [[ -z "$BUILDDIR" || ! -d "$BUILDDIR" ]]; then
+            __log "Wiki dist directory not found for '$w_name'." -t error -l wiki
+            return 1
+        fi
+
+        local pipe="/tmp/omni_wiki_serve_$$"
+        mkfifo "$pipe"
+        trap 'rm -f "$pipe" 2>/dev/null' EXIT RETURN INT TERM
+
+        __log "Serving '$w_name' ($BUILDDIR) on port $port..." -t info -l wiki
+
+        while true; do
+            nc -l -p "$port" < "$pipe" | {
+                local line method rest req_path target size header
+                read -r line
+                line="${line%%$'\r'}"
+                method="${line%% *}"
+                rest="${line#* }"
+                req_path="${rest%% *}"
+
+                while read -r header; do
+                    header="${header%%$'\r'}"
+                    [[ -z "$header" ]] && break
+                done
+
+                req_path="${req_path%%\?*}"
+                req_path="${req_path%%\#*}"
+                req_path="${req_path#/}"
+                req_path="${req_path//..\//}"
+                [[ -z "$req_path" ]] && req_path="index.html"
+
+                target="${BUILDDIR}/${req_path}"
+                if [[ -f "$target" ]]; then
+                    size=$(wc -c < "$target")
+                    printf "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" "$size"
+                    cat "$target"
+                else
+                    printf "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot Found"
+                fi
+            } > "$pipe"
+        done
+    }
+
     wiki() {
         local cmd="$1"; shift || true
         case "$cmd" in
@@ -1026,6 +1104,7 @@ FLAGS:
             refs) __wiki__.refs "$@" ;;
             block) __wiki__.block "$@" ;;
             build|--rebuild) __wiki__.build "$@" ;;
+            serve) __wiki__.serve "$@" ;;
             -h|--help|"") __wiki__.__help__ ;;
             *) __log "Unknown command '$cmd' for wiki." -t error -l wiki; __wiki__.__help__; return 1 ;;
         esac
@@ -1040,14 +1119,16 @@ FLAGS:
         fi
 
         if [[ "${COMP_CWORD}" == 1 ]]; then
-            COMPREPLY=( $(compgen -W "ls new set rm pages template refs block build --rebuild --help -h" -- "$cur") )
+            COMPREPLY=( $(compgen -W "ls new set rm pages template refs block build serve --rebuild --help -h" -- "$cur") )
             return 0
         fi
         
         case "$base_cmd" in
-            rm)
+            rm|serve)
                 if [[ "${COMP_CWORD}" == 2 ]]; then
                     declare -p WIKIS >/dev/null 2>&1 && COMPREPLY=( $(compgen -W "${WIKIS[*]}" -- "$cur") )
+                elif [[ "$base_cmd" == "serve" && "$cur" == -* ]]; then
+                    COMPREPLY=( $(compgen -W "-p --port" -- "$cur") )
                 fi
                 ;;
             new|set)

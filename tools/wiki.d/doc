@@ -36,7 +36,8 @@ ANCHORS & CROSS-REFERENCES
 --------------------------
 * Create Anchor : `{{#marker_name}}`
 * Link to Anchor: `{{=marker_name}}`
-* Topic Link    : `{{:topic:label}}` (Resolves to the URL/anchor defined via `wiki ref`).
+* Topic Link    : `{{<topic>:<ref>}}` (Displays the ref name as the text link).
+* Custom Label  : `{{<topic>:<ref>:<label>}}` (Displays the custom label as the text link).
 
 SPECIAL PLACEHOLDERS
 --------------------
@@ -46,16 +47,23 @@ Place these exactly as shown on their own lines:
 
 CUSTOM BLOCKS
 -------------
-Wrap content in triple backticks and curly braces: ```{{ block_name }} ... ```
+Wrap content using double curly braces to open and `{{end}}` to close:
+{{block_name}}
+... content ...
+{{end}}
+
 1. Built-in `table`: Renders ASCII tables to HTML.
 2. Built-in `diagram`: Renders custom SVG diagrams from textual node/arrow definitions.
-3. Built-in `def`: Structured definition block.
+3. Built-in `def`: Structured definition block. Supports inline code blocks.
    Syntax:
-   :: name: <term>
+   {{def}}
+   :: term: <term>
    :: context: <category>
-   :: def: <definition text>
-   :: related: <related links>
-   (Automatically generates a reference anchor: `{{:def:context.name}}`).
+   :: idea: <core idea text>
+   :: details: <extended details text>
+   :: related: <comma-separated list of refs, e.g., context.term1, context.term2>
+   {{end}}
+   (Automatically generates a reference anchor: `{{def:context.term}}`).
 4. Custom Blocks: User-defined via `wiki block new <name> -c <class>`, wraps content in `<div class="class">...</div>`.
 
 LAYOUTS & TEMPLATING

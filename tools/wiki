@@ -550,63 +550,51 @@ FLAGS:
             return 1
         fi
 
-        local pipe="/tmp/omni_wiki_serve_$$"
-        mkfifo "$pipe"
-        trap 'rm -f "$pipe" 2>/dev/null' EXIT RETURN INT TERM
+        __log "Serving '$w_name' ($BUILDDIR) on port $port... (Press Ctrl+C to stop)" -t info -l wiki
 
-        __log "Serving '$w_name' ($BUILDDIR) on port $port..." -t info -l wiki
-
-        while true; do
-            nc -l -p "$port" < "$pipe" | {
-                local line method rest req_path target size header
-                read -r line
-                line="${line%%$'\r'}"
-                method="${line%% *}"
-                rest="${line#* }"
-                req_path="${rest%% *}"
-
-                while read -r header; do
-                    header="${header%%$'\r'}"
-                    [[ -z "$header" ]] && break
-                done
-
-                req_path="${req_path%%\?*}"
-                req_path="${req_path%%\#*}"
+        if command -v python3 >/dev/null 2>&1; then
+            (cd "$BUILDDIR" && python3 -m http.server "$port")
+        elif command -v python >/dev/null 2>&1; then
+            (cd "$BUILDDIR" && python -m SimpleHTTPServer "$port")
+        elif command -v nc >/dev/null 2>&1; then
+            __log "Python not found. Falling back to basic 'nc' server (Single-threaded)." -t info -l wiki
+            (
+                cd "$BUILDDIR" || exit 1
                 
-                req_path="${req_path//+/ }"
-                printf -v req_path "%b" "${req_path//%/\\x}"
+                local pipe="/tmp/wiki_serve_$$"
+                trap 'rm -f "$pipe"' EXIT INT TERM
+                mkfifo "$pipe"
+                
+                local nc_cmd="nc -l $port"
+                nc -h 2>&1 | grep -q '\-p' && nc_cmd="nc -l -p $port"
 
-                req_path="${req_path#/}"
-                req_path="${req_path//..\//}"
-                [[ -z "$req_path" ]] && req_path="index.html"
-
-                target="${BUILDDIR}/${req_path}"
-
-                if [[ -d "$target" ]]; then
-                    target="${target%/}/index.html"
-                fi
-
-                if [[ -f "$target" ]]; then
-                    size=$(wc -c < "$target")
-                    
-                    local ctype="text/html"
-                    case "$target" in
-                        *.css) ctype="text/css" ;;
-                        *.js)  ctype="application/javascript" ;;
-                        *.png) ctype="image/png" ;;
-                        *.jpg|*.jpeg) ctype="image/jpeg" ;;
-                        *.svg) ctype="image/svg+xml" ;;
-                        *.ico) ctype="image/x-icon" ;;
-                        *.json|*.webmanifest) ctype="application/json" ;;
-                    esac
-                    
-                    printf "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nContent-Type: %s\r\nConnection: close\r\n\r\n" "$size" "$ctype"
-                    cat "$target"
-                else
-                    printf "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot Found"
-                fi
-            } > "$pipe"
-        done
+                while true; do
+                    eval "$nc_cmd" < "$pipe" | (
+                        read -r line
+                        line="${line%%$'\r'}"
+                        local req_path="${line#* }"
+                        req_path="${req_path%% *}"
+                        [[ "$req_path" == "/" || -z "$req_path" ]] && req_path="/index.html"
+                        local target=".${req_path}"
+                        
+                        if [[ -f "$target" ]]; then
+                            local mime="text/plain"
+                            [[ "$target" == *".html" ]] && mime="text/html"
+                            [[ "$target" == *".css" ]] && mime="text/css"
+                            [[ "$target" == *".js" ]] && mime="application/javascript"
+                            
+                            echo -ne "HTTP/1.1 200 OK\r\nContent-Type: $mime\r\n\r\n" > "$pipe"
+                            cat "$target" > "$pipe"
+                        else
+                            echo -ne "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n<h1>404 Not Found</h1>" > "$pipe"
+                        fi
+                    )
+                done
+            )
+        else
+            __log "Python or nc is required to serve files." -t error -l wiki
+            return 1
+        fi
     }
 
     wiki() {

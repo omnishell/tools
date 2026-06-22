@@ -1,6 +1,156 @@
 #! /bin/bash
 
 __helper__() {
+    declare -gA WIKIS WIKI_VARS WIKI_PAGES WIKI_PAGE_VARS WIKI_TEMPLATES WIKI_TEMPLATE_VARS WIKI_TOPICS WIKI_REFS WIKI_BLOCKS 2>/dev/null || true
+
+    __parse_inline() {
+        if [[ "$line" != *[\`\*_+{\[]* ]]; then return; fi
+        
+        if [[ "$line" == *"\`"* ]]; then
+            local code_re='`([^`]+)`'
+            while [[ "$line" =~ $code_re ]]; do
+                local full="${BASH_REMATCH[0]}" code="${BASH_REMATCH[1]}"
+                
+                code="${code//&/$_amp}"; code="${code//</$_lt}"; code="${code//>/$_gt}"
+                
+                local pre_line="${line%%"$full"*}"
+                local post_line="${line#*"$full"}"
+                line="${pre_line}<inline>${code}</inline>${post_line}"
+            done
+        fi
+        
+        if [[ "$line" == *"**"* || "$line" == *"__"* ]]; then
+            while [[ "$line" == *"**"*"**"* ]]; do line="${line/\*\*/<strong>}"; line="${line/\*\*/<\/strong>}"; done
+            while [[ "$line" == *"__"*"__"* ]]; do line="${line/__/<strong>}"; line="${line/__/<\/strong>}"; done
+        fi
+        
+        if [[ "$line" == *"++"* ]]; then
+            while [[ "$line" == *"++"*"++"* ]]; do line="${line/\+\+/<ins>}"; line="${line/\+\+/<\/ins>}"; done
+        fi
+        
+        if [[ "$line" == *"_"*"_"* ]]; then
+            local em_re='(^|[[:space:][:punct:]])_([a-zA-Z0-9][^_]+)_([[:space:][:punct:]]|$)'
+            while [[ "$line" =~ $em_re ]]; do
+                local full="${BASH_REMATCH[0]}" pre="${BASH_REMATCH[1]}" t_content="${BASH_REMATCH[2]}" post="${BASH_REMATCH[3]}"
+                if [[ "$t_content" == *"/"* || "$t_content" == *"="* ]]; then break; fi
+                line="${line/"$full"/${pre}<em>${t_content}</em>${post}}"
+            done
+        fi
+        
+        if [[ "$line" == *"{{"*":"*"}}"* ]]; then
+            local topic_re='\{\{[[:space:]]*([a-zA-Z0-9_-]+):([a-zA-Z0-9_.-]+)(:([^}]+))?[[:space:]]*\}\}'
+            while [[ "$line" =~ $topic_re ]]; do
+                local full="${BASH_REMATCH[0]}"
+                local topic="${BASH_REMATCH[1]}"
+                local ref_key="${BASH_REMATCH[2]}"
+                local label="${BASH_REMATCH[4]}"
+                
+                if [[ -z "$label" ]]; then
+                    label="$ref_key"
+                else
+                    label="${label#"${label%%[![:space:]]*}"}"
+                    label="${label%"${label##*[![:space:]]}"}"
+                fi
+                
+                local key="${topic}::${ref_key}" 
+                
+                local target="${WIKI_REFS[$key]:-}"
+                
+                if [[ -z "$target" && -n "$w_name" ]]; then
+                    target="${WIKI_REFS[${w_name}::${ENV:-}::${key}]:-}"
+                fi
+                
+                if [[ -z "$target" ]]; then
+                    local clean_key="${key//[^a-zA-Z0-9_.:-]/}"
+                    local k
+                    for k in "${!WIKI_REFS[@]}"; do
+                        local clean_k="${k//[^a-zA-Z0-9_.:-]/}"
+                        if [[ "$clean_k" == "$clean_key" || "$clean_k" == *"::${clean_key}" ]]; then
+                            target="${WIKI_REFS[$k]}"
+                            break
+                        fi
+                    done
+                fi
+
+                if [[ -z "$target" ]]; then 
+                    line="${line/"$full"/<span class=\"wiki-topic-error\">${label}</span>}"
+                else
+                    local href=""
+                    if [[ "$target" == http://* || "$target" == https://* ]]; then href="$target"
+                    else
+                        local internal_path="${target%:*}" marker="${target##*:}"
+                        [[ "$target" != *":"* ]] && marker=""
+                        internal_path="${internal_path//./\/}"; href="/${internal_path}.html"
+                        [[ -n "$marker" ]] && href="${href}#${marker}"
+                    fi
+                    local pre_line="${line%%"$full"*}"
+                    local post_line="${line#*"$full"}"
+                    line="${pre_line}<a class=\"wiki-topic-${topic}\" href=\"${href}\">${label}</a>${post_line}"
+                fi
+            done
+        fi
+        
+        if [[ "$line" == *"{{#"* || "$line" == *"{{="* ]]; then
+            local mark_re='\{\{\#([a-zA-Z0-9_.-]+)\}\}'
+            local anchor_re='\{\{\=([a-zA-Z0-9_.-]+)\}\}'
+            while [[ "$line" =~ $mark_re ]]; do line="${line/"${BASH_REMATCH[0]}"/<span id=\"${BASH_REMATCH[1]}\" class=\"wiki-mark\"></span>}"; done
+            while [[ "$line" =~ $anchor_re ]]; do line="${line/"${BASH_REMATCH[0]}"/<a href=\"#${BASH_REMATCH[1]}\">${BASH_REMATCH[1]}</a>}"; done
+        fi
+        
+        if [[ "$line" == *"["* && "$line" == *"]("* ]]; then
+            local link_re='\[([^]]+)\]\(([^)]+)\)'
+            while [[ "$line" =~ $link_re ]]; do
+                local l_match="${BASH_REMATCH[0]}" l_text="${BASH_REMATCH[1]}" l_href="${BASH_REMATCH[2]}"
+                
+                if [[ "$l_href" != http://* && "$l_href" != https://* ]]; then
+                    if [[ "$l_href" =~ ^(.*)\.(md|markdown|MD|MARKDOWN)([ \t#].*)?$ ]]; then
+                        l_href="${BASH_REMATCH[1]}.html${BASH_REMATCH[3]}"
+                    fi
+                fi
+                
+                local pre_line="${line%%"$l_match"*}"
+                local post_line="${line#*"$l_match"}"
+                line="${pre_line}<a href=\"${l_href}\">${l_text}</a>${post_line}"
+            done
+        fi
+    }
+
+    __parse_multiline_blocks() {
+        local text="$1"
+        local out=""
+        local in_inner=0
+        local code_lang=""
+        
+        while IFS= read -r l || [[ -n "$l" ]]; do
+            if (( in_inner == 0 )); then
+                # Detecta abertura de bloco de código interno
+                if [[ "$l" =~ ^[[:space:]]*\`\`\`([a-zA-Z0-9_+-]*)[[:space:]]*$ ]]; then
+                    in_inner=1
+                    code_lang="${BASH_REMATCH[1]}"
+                    out+="${out:+$'\n'}<pre><code class=\"language-${code_lang}\">"$'\n'
+                else
+                    # Processa inline markdown normalmente para linhas de texto
+                    local temp_line="$line"
+                    line="$l"
+                    __parse_inline
+                    l="$line"
+                    line="$temp_line"
+                    out+="${out:+$'\n'}$l"
+                fi
+            else
+                # Detecta fechamento de bloco de código
+                if [[ "${l//[[:space:]]/}" == "\`\`\`" ]]; then
+                    in_inner=0
+                    out+="</code></pre>"
+                else
+                    l="${l//&/$_amp}"; l="${l//</$_lt}"; l="${l//>/$_gt}"
+                    out+="$l"$'\n'
+                fi
+            fi
+        done <<< "$text"
+        
+        echo -n "$out"
+    }
 
     __wiki_get_fm_val() {
         local file="$1" key="$2" in_fm=0 line
@@ -119,80 +269,6 @@ __helper__() {
             done
             LIST_INDENTS=()
             LIST_TYPES=()
-        fi
-    }
-
-    __parse_inline() {
-        if [[ "$line" != *[\`\*_+{\[]* ]]; then return; fi
-        
-        if [[ "$line" == *"\`"* ]]; then
-            local code_re='`([^`]+)`'
-            while [[ "$line" =~ $code_re ]]; do
-                local full="${BASH_REMATCH[0]}" code="${BASH_REMATCH[1]}"
-                
-                code="${code//&/$_amp}"; code="${code//</$_lt}"; code="${code//>/$_gt}"
-                
-                local pre_line="${line%%"$full"*}"
-                local post_line="${line#*"$full"}"
-                line="${pre_line}<inline>${code}</inline>${post_line}"
-            done
-        fi
-        if [[ "$line" == *"**"* || "$line" == *"__"* ]]; then
-            while [[ "$line" == *"**"*"**"* ]]; do line="${line/\*\*/<strong>}"; line="${line/\*\*/<\/strong>}"; done
-            while [[ "$line" == *"__"*"__"* ]]; do line="${line/__/<strong>}"; line="${line/__/<\/strong>}"; done
-        fi
-        if [[ "$line" == *"++"* ]]; then
-            while [[ "$line" == *"++"*"++"* ]]; do line="${line/\+\+/<ins>}"; line="${line/\+\+/<\/ins>}"; done
-        fi
-        if [[ "$line" == *"_"*"_"* ]]; then
-            local em_re='(^|[[:space:][:punct:]])_([a-zA-Z0-9][^_]+)_([[:space:][:punct:]]|$)'
-            while [[ "$line" =~ $em_re ]]; do
-                local full="${BASH_REMATCH[0]}" pre="${BASH_REMATCH[1]}" t_content="${BASH_REMATCH[2]}" post="${BASH_REMATCH[3]}"
-                if [[ "$t_content" == *"/"* || "$t_content" == *"="* ]]; then break; fi
-                line="${line/"$full"/${pre}<em>${t_content}</em>${post}}"
-            done
-        fi
-        if [[ "$line" == *"{{:"* ]]; then
-            local topic_re='\{\{[[:space:]]*:([a-zA-Z0-9_.-]+):([a-zA-Z0-9_.-]+)[[:space:]]*\}\}'
-            while [[ "$line" =~ $topic_re ]]; do
-                local full="${BASH_REMATCH[0]}" topic="${BASH_REMATCH[1]}" label="${BASH_REMATCH[2]}"
-                local key="${topic}::${label}" target="${WIKI_REFS[$key]:-}"
-                if [[ -z "$target" ]]; then 
-                    line="${line/"$full"/<span class=\"wiki-topic-error\">${label}</span>}"
-                else
-                    local href=""
-                    if [[ "$target" == http://* || "$target" == https://* ]]; then href="$target"
-                    else
-                        local internal_path="${target%:*}" marker="${target##*:}"
-                        [[ "$target" != *":"* ]] && marker=""
-                        internal_path="${internal_path//./\/}"; href="/${internal_path}.html"
-                        [[ -n "$marker" ]] && href="${href}#${marker}"
-                    fi
-                    local pre_line="${line%%"$full"*}"
-                    local post_line="${line#*"$full"}"
-                    line="${pre_line}<a class=\"wiki-topic-${topic}\" href=\"${href}\">${label}</a>${post_line}"
-                fi
-            done
-        fi
-        if [[ "$line" == *"{{#"* || "$line" == *"{{="* ]]; then
-            local mark_re='\{\{\#([a-zA-Z0-9_.-]+)\}\}'
-            local anchor_re='\{\{\=([a-zA-Z0-9_.-]+)\}\}'
-            while [[ "$line" =~ $mark_re ]]; do line="${line/"${BASH_REMATCH[0]}"/<span id=\"${BASH_REMATCH[1]}\" class=\"wiki-mark\"></span>}"; done
-            while [[ "$line" =~ $anchor_re ]]; do line="${line/"${BASH_REMATCH[0]}"/<a href=\"#${BASH_REMATCH[1]}\">${BASH_REMATCH[1]}</a>}"; done
-        fi
-        if [[ "$line" == *"["* && "$line" == *"]("* ]]; then
-            local link_re='\[([^]]+)\]\(([^)]+)\)'
-            while [[ "$line" =~ $link_re ]]; do
-                local l_match="${BASH_REMATCH[0]}" l_text="${BASH_REMATCH[1]}" l_href="${BASH_REMATCH[2]}"
-                if [[ "$l_href" != http://* && "$l_href" != https://* ]]; then
-                    if [[ "$l_href" =~ ^(.*)\.(md|markdown|MD|MARKDOWN)([ \t#].*)?$ ]]; then
-                        l_href="${BASH_REMATCH[1]}.html${BASH_REMATCH[3]}"
-                    fi
-                fi
-                local pre_line="${line%%"$l_match"*}"
-                local post_line="${line#*"$l_match"}"
-                line="${pre_line}<a href=\"${l_href}\">${l_text}</a>${post_line}"
-            done
         fi
     }
 
@@ -1032,7 +1108,7 @@ __helper__() {
     __render_def() {
         if [[ ${#def_buffer[@]} -eq 0 ]]; then return; fi
         
-        local d_name="" d_context="" d_def="" d_related=""
+        local d_term="" d_context="" d_idea="" d_details="" d_related=""
         local current_key="" current_val=""
         
         local b_line
@@ -1040,61 +1116,101 @@ __helper__() {
             if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
                 if [[ -n "$current_key" ]]; then
                     case "$current_key" in
-                        name) d_name="$current_val" ;;
+                        term) d_term="$current_val" ;;
                         context) d_context="$current_val" ;;
-                        def) d_def="$current_val" ;;
+                        idea) d_idea="$current_val" ;;
+                        details) d_details="$current_val" ;;
                         related) d_related="$current_val" ;;
                     esac
                 fi
                 current_key="${BASH_REMATCH[1]}"
                 current_val="${BASH_REMATCH[2]}"
+                current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                current_val="${current_val%"${current_val##*[![:space:]]}"}"
             else
                 if [[ -n "$current_key" ]]; then
-                    current_val+=" $b_line"
+                    current_val+=$'\n'"$b_line"
                 fi
             fi
         done
+        
         if [[ -n "$current_key" ]]; then
             case "$current_key" in
-                name) d_name="$current_val" ;;
+                term) d_term="$current_val" ;;
                 context) d_context="$current_val" ;;
-                def) d_def="$current_val" ;;
+                idea) d_idea="$current_val" ;;
+                details) d_details="$current_val" ;;
                 related) d_related="$current_val" ;;
             esac
         fi
         
-        local anchor_id="def-${d_context}-${d_name}"
+        d_term="${d_term//[^a-zA-Z0-9_.-]/}"
+        d_context="${d_context//[^a-zA-Z0-9_.-]/}"
         
-        if [[ -n "$w_name" && -n "$d_context" && -n "$d_name" ]]; then
-            WIKI_REFS["def::${d_context}.${d_name}"]="${pagename}:${anchor_id}"
-            WIKI_REFS["${w_name}::${ENV:-}::def::${d_context}.${d_name}"]="${pagename}:${anchor_id}"
+        local anchor_id="def-${d_context}-${d_term}"
+        
+        if [[ -n "$w_name" && -n "$d_context" && -n "$d_term" ]]; then
+            declare -p WIKI_REFS >/dev/null 2>&1 || declare -g -A WIKI_REFS=()
+            
+            WIKI_REFS["def::${d_context}.${d_term}"]="${pagename}:${anchor_id}"
+            WIKI_REFS["${w_name}::${ENV:-}::def::${d_context}.${d_term}"]="${pagename}:${anchor_id}"
             __wiki_save
         fi
 
-        local temp_line="$line"
+        d_idea="$(__parse_multiline_blocks "$d_idea")"
         
-        line="$d_def"
-        __parse_inline
-        d_def="$line"
-        
-        if [[ -n "$d_related" ]]; then
-            line="$d_related"
-            __parse_inline
-            d_related="$line"
+        if [[ -n "$d_details" ]]; then
+            d_details="$(__parse_multiline_blocks "$d_details")"
         fi
         
-        line="$temp_line"
-
+        if [[ -n "$d_related" ]]; then
+            local rel_out="<ul class=\"def_related_list\">"$'\n'
+            local OIFS="$IFS"
+            IFS=','
+            local r_items=($d_related)
+            IFS="$OIFS"
+            
+            local temp_line="$line"
+            for r_item in "${r_items[@]}"; do
+                r_item="${r_item//[^a-zA-Z0-9_.-]/}"
+                if [[ -n "$r_item" ]]; then
+                    line="{{def:${r_item}}}"
+                    __parse_inline
+                    rel_out+="        <li>$line</li>"$'\n'
+                fi
+            done
+            line="$temp_line"
+            rel_out+="    </ul>"
+            
+            d_related="$rel_out"
+        fi
+        
         local html="<def id=\"${anchor_id}\">"$'\n'
-        html+="    <span class=\"def_prefix\">def: </span><span class=\"def_name\">${d_name}</span><br>"$'\n'
-        html+="    <p class=\"def_text\">${d_def}</p>"$'\n'
-        if [[ -n "$d_related" ]]; then
-            html+="    <span class=\"def_related_prefix\">related: </span> ${d_related}"$'\n'
+        html+="<div class=\"def_div\">"$'\n'
+        html+="    <span class=\"def_prefix\">def: </span><span class=\"def_term\">${d_term}</span> <span class=\"def_context\">(${d_context})</span><br>"$'\n'
+        
+        html+="    <div class=\"def_inner_div\">"$'\n'
+        html+="        <span class=\"def_idea_prefix\">idea: </span><div class=\"def_idea_text\">${d_idea}</div>"$'\n'
+        html+="    </div>"$'\n'
+        
+        if [[ -n "$d_details" ]]; then
+            html+="    <div class=\"def_details_div\">"$'\n'
+            html+="        <span class=\"def_details_prefix\">details: </span><div class=\"def_details_text\">${d_details}</div>"$'\n'
+            html+="    </div>"$'\n'
         fi
+        
+        if [[ -n "$d_related" ]]; then
+            html+="    <div class=\"def_related_div\">"$'\n'
+            html+="        <span class=\"def_related_prefix\">related: </span>"$'\n'
+            html+="        ${d_related}"$'\n'
+            html+="    </div>"$'\n'
+        fi
+        
+        html+="</div>"$'\n'
         html+="</def>"$'\n'
         
         content+="${html}"
-    }
+    }   
 
     __render_page() {
         local file="$1" pagename="$2" out_path="$3" current_dir="$4"
@@ -1143,50 +1259,48 @@ __helper__() {
             fi
             
             if [[ -n "$in_custom_block" ]]; then
-                if [[ "${line//[[:space:]]/}" == "\`\`\`" ]]; then
+                if [[ "$line" =~ ^[[:space:]]*\{\{\ *end\ *\}\}[[:space:]]*$ ]]; then
                     if [[ "$in_custom_block" == "table" ]]; then __render_table
                     elif [[ "$in_custom_block" == "diagram" ]]; then __render_diagram
                     elif [[ "$in_custom_block" == "def" ]]; then __render_def
                     elif [[ -n "${WIKI_BLOCKS[$in_custom_block]:-}" ]]; then content+="</div>"$'\n'
                     else content+="</${in_custom_block}>"$'\n'; fi
                     in_custom_block=""; ignore_next_empty=1; continue
+                else
+                    if [[ "$in_custom_block" == "table" ]]; then table_buffer+=("$line"); continue; fi
+                    if [[ "$in_custom_block" == "diagram" ]]; then diagram_buffer+=("$line"); continue; fi
+                    if [[ "$in_custom_block" == "def" ]]; then def_buffer+=("$line"); continue; fi
+                    if [[ -n "${WIKI_BLOCKS[$in_custom_block]:-}" ]]; then content+="$line"$'\n'; continue; fi
+                    content+="$line"$'\n'; continue
                 fi
-                if [[ "$in_custom_block" == "table" ]]; then table_buffer+=("$line"); continue; fi
-                if [[ "$in_custom_block" == "diagram" ]]; then diagram_buffer+=("$line"); continue; fi
-                if [[ "$in_custom_block" == "def" ]]; then def_buffer+=("$line"); continue; fi
             else
-                if [[ "$line" == *"\`\`\`"* ]]; then
-                    (( list_depth > 0 )) && __close_lists
-                    
-                    if [[ "$line" =~ ^[[:space:]]*\`\`\`\{\{\ *([a-zA-Z0-9_-]+)\ *\}\}[[:space:]]*$ ]]; then
-                        content="${content%<br><br>$'\n'}"
-                        local bname="${BASH_REMATCH[1]}"
-                        if [[ "$bname" == "table" ]]; then 
-                            in_custom_block="table"
-                            table_buffer=()
-                        elif [[ "$bname" == "diagram" ]]; then 
-                            in_custom_block="diagram"
-                            diagram_buffer=()
-                        elif [[ "$bname" == "def" ]]; then 
-                            in_custom_block="def"
-                            def_buffer=()
-                        elif [[ -n "${WIKI_BLOCKS[$bname]:-}" ]]; then
-                            in_custom_block="$bname"
-                            content+="<div class=\"${WIKI_BLOCKS[$bname]}\">"$'\n'
-                        else
-                            in_custom_block="${bname}"
-                            [[ "$bname" == "quote" ]] && in_custom_block="blockquote"
-                            content+="<${in_custom_block}>"$'\n'
-                        fi
+                if [[ "$line" =~ ^[[:space:]]*\{\{\ *([a-zA-Z0-9_-]+)\ *\}\}[[:space:]]*$ ]]; then
+                    local bname="${BASH_REMATCH[1]}"
+                    if [[ "$bname" == "table" ]]; then 
+                        in_custom_block="table"; table_buffer=(); continue
+                    elif [[ "$bname" == "diagram" ]]; then 
+                        in_custom_block="diagram"; diagram_buffer=(); continue
+                    elif [[ "$bname" == "def" ]]; then 
+                        in_custom_block="def"; def_buffer=(); continue
+                    elif [[ -n "${WIKI_BLOCKS[$bname]:-}" ]]; then
+                        in_custom_block="$bname"
+                        content+="<div class=\"${WIKI_BLOCKS[$bname]}\">"$'\n'
                         continue
-                    elif [[ "$line" =~ ^[[:space:]]*\`\`\`([a-zA-Z0-9_+-]*)[[:space:]]*$ ]]; then
-                        content="${content%<br><br>$'\n'}"
-                        in_code_block=1
-                        local lang="${BASH_REMATCH[1]}"
-                        if [[ -n "$lang" ]]; then content+="<pre><code class=\"language-${lang}\">"$'\n'
-                        else content+="<pre><code>"$'\n'; fi
+                    elif [[ "$bname" == "quote" ]]; then
+                        in_custom_block="blockquote"
+                        content+="<${in_custom_block}>"$'\n'
                         continue
                     fi
+                fi
+                
+                if [[ "$line" =~ ^[[:space:]]*\`\`\`([a-zA-Z0-9_+-]*)[[:space:]]*$ ]]; then
+                    (( list_depth > 0 )) && __close_lists
+                    content="${content%<br><br>$'\n'}"
+                    in_code_block=1
+                    local lang="${BASH_REMATCH[1]}"
+                    if [[ -n "$lang" ]]; then content+="<pre><code class=\"language-${lang}\">"$'\n'
+                    else content+="<pre><code>"$'\n'; fi
+                    continue
                 fi
             fi
 
@@ -1197,6 +1311,7 @@ __helper__() {
             
             if [[ "$line" == "#"* ]]; then
                 if [[ "$line" =~ $h_regex ]]; then
+                    (( list_depth > 0 )) && __close_lists
                     local h_level="${#BASH_REMATCH[1]}"
                     local h_text="${BASH_REMATCH[2]}"
                     local slug="${h_text,,}"

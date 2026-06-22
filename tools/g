@@ -14,7 +14,7 @@ Top-level commands:
   send          Push variations up to origin
   change        Manage present changes (info, ls, add, rm, undo, clean)
   history       Manage past history (session, join, rename, rm)
-  commit        Manage snapshots (new, ls, diff)
+  commit        Manage snapshots (new, ls, diff, type, context)
   branch        Manage branches (new, ls, rm, send, rename, rebase, ff, merge, sync)
   tag           Manage tags (new, ls, rm, send, edit)
   conflict      Manage conflicts (ls, resolve, diff)
@@ -29,19 +29,6 @@ EOF
         fi
 
         local cmd="${1:-}"
-        
-        if [[ -n "$cmd" && "$cmd" == *":" ]]; then
-            local subcmd="$cmd"
-            shift || true
-            local msg="" ctx=""
-            while [[ $# -gt 0 ]]; do
-                case "$1" in -c|--context) ctx="$2"; shift 2 ;; *) msg+="${msg:+ }$1"; shift ;; esac
-            done
-            local type="${subcmd%:}" prefix="$type"
-            [[ -n "$ctx" ]] && prefix="$type($ctx)"
-            git commit -m "${prefix}: ${msg}"
-            return
-        fi
 
         case "$cmd" in
             -h|--help|"") __g__.__help__ ;;
@@ -459,20 +446,54 @@ EOF
                 shift || true
                 case "$subcmd" in
                     new)
-                        local msg=""
-                        if [[ $# -eq 0 ]]; then read -e -p "Commit message: " msg
-                        else msg="$*"; fi
+                        local msg="" c_type="" c_ctx=""
+                        while [[ $# -gt 0 ]]; do
+                            case "$1" in
+                                -t|--type) c_type="${2:-}"; shift 2 2>/dev/null || shift ;;
+                                -c|--context) c_ctx="${2:-}"; shift 2 2>/dev/null || shift ;;
+                                *) msg+="${msg:+ }$1"; shift ;;
+                            esac
+                        done
+                        if [[ -z "$msg" ]]; then
+                            read -e -p "Commit message: " msg
+                        fi
                         [[ -z "$msg" ]] && return 1
-                        git commit -m "$msg"
+                        local prefix=""
+                        [[ -n "$c_type" ]] && prefix="$c_type"
+                        if [[ -n "$prefix" && -n "$c_ctx" ]]; then
+                            prefix="${prefix}(${c_ctx}): "
+                        elif [[ -n "$prefix" ]]; then
+                            prefix="${prefix}: "
+                        fi
+                        git commit -m "${prefix}${msg}"
+                        ;;
+                    type|context)
+                        local kind="$subcmd"
+                        local op="$1"
+                        shift || true
+                        local config_key="g.commit.${kind}"
+                        case "$op" in
+                            new|set)
+                                [[ -z "$1" ]] && return 1
+                                git config --global --unset-all "$config_key" "^$1$" 2>/dev/null || true
+                                git config --global --add "$config_key" "$1"
+                                ;;
+                            list|ls)
+                                git config --global --get-all "$config_key" || true
+                                ;;
+                            rm)
+                                [[ -z "$1" ]] && return 1
+                                git config --global --unset-all "$config_key" "^$1$" 2>/dev/null || true
+                                ;;
+                            *) return 1 ;;
+                        esac
                         ;;
                     list|ls) git log --oneline --decorate --graph -n "${1:-10}" ;;
                     diff)
                         if [[ $# -eq 0 ]]; then git diff; return; fi
                         git difftool -t vimdiff -y "$@"
                         ;;
-                    *)
-                        return 1
-                        ;;
+                    *) return 1 ;;
                 esac
                 ;;
             branch)
@@ -830,7 +851,8 @@ EOF
                             rm -f "$tmp_ours" "$tmp_theirs"; return 1
                         fi
                         vimdiff "$tmp_ours" "$tmp_theirs"
-                        local status=$? rm -f "$tmp_ours" "$tmp_theirs"
+                        local status=$?
+                        rm -f "$tmp_ours" "$tmp_theirs"
                         return $status
                         ;;
                     *)
@@ -925,6 +947,20 @@ EOF
     }
 
     __g__.__compl__() {
+        _g_get_types() {
+            local types
+            types=$(git config --global --get-all g.commit.type 2>/dev/null)
+            if [[ -z "$types" ]]; then
+                printf "%s\n" feat fix ref ci conf doc
+            else
+                printf "%s\n" "$types"
+            fi
+        }
+
+        _g_get_contexts() {
+            git config --global --get-all g.commit.context 2>/dev/null || true
+        }
+
         _g_unstaged_files_relative() {
             local repo_root file abs rel files=()
             repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return
@@ -964,18 +1000,46 @@ EOF
         cur="${COMP_WORDS[COMP_CWORD]}"
         prev_word="${COMP_WORDS[COMP_CWORD-1]}"
 
-        local top_level_commands="--help doc: feat: fix: ref: test: change history commit branch remote tag conflict git . .. , all info send"
+        local top_level_commands="change history commit branch remote tag conflict git . .. , all info send"
         local change_subcommands="info ls add rm undo clean --help"
         local history_subcommands="session join rename rm --help"
-        local commit_subcommands="new ls diff --help"
         local branch_subcommands="new ls rm send rename rebase ff merge sync --help"
         local tag_subcommands="new ls rm send edit --help"
         local conflict_subcommands="ls resolve diff --help"
         local remote_subcommands="new ls rm update --help"
 
-        if [[ "${COMP_WORDS[1]}" == *: ]]; then
-            COMPREPLY=( $(compgen -W "-c --context" -- "${cur}") )
-            return
+        if [[ "${COMP_WORDS[1]}" == "commit" ]]; then
+            local commit_subcommands="new ls diff type context --help"
+            if [[ "${COMP_CWORD}" == 2 ]]; then
+                COMPREPLY=( $(compgen -W "${commit_subcommands}" -- "${cur}") )
+                return 0
+            fi
+            local subcmd="${COMP_WORDS[2]}"
+            if [[ "$subcmd" == "type" || "$subcmd" == "context" ]]; then
+                if [[ "${COMP_CWORD}" == 3 ]]; then
+                    COMPREPLY=( $(compgen -W "new set ls rm" -- "${cur}") )
+                    return 0
+                elif [[ "${COMP_CWORD}" == 4 && ("${COMP_WORDS[3]}" == "rm" || "${COMP_WORDS[3]}" == "set" || "${COMP_WORDS[3]}" == "new") ]]; then
+                    if [[ "$subcmd" == "type" ]]; then
+                        COMPREPLY=( $(compgen -W "$(_g_get_types)" -- "${cur}") )
+                    else
+                        COMPREPLY=( $(compgen -W "$(_g_get_contexts)" -- "${cur}") )
+                    fi
+                    return 0
+                fi
+            elif [[ "$subcmd" == "new" ]]; then
+                if [[ "$prev_word" == "-t" || "$prev_word" == "--type" ]]; then
+                    COMPREPLY=( $(compgen -W "$(_g_get_types)" -- "${cur}") )
+                    return 0
+                elif [[ "$prev_word" == "-c" || "$prev_word" == "--context" ]]; then
+                    COMPREPLY=( $(compgen -W "$(_g_get_contexts)" -- "${cur}") )
+                    return 0
+                else
+                    COMPREPLY=( $(compgen -W "-t --type -c --context" -- "${cur}") )
+                    return 0
+                fi
+            fi
+            return 0
         fi
 
         case "${COMP_CWORD}" in
@@ -984,7 +1048,6 @@ EOF
                 case "${prev_word}" in
                     change) COMPREPLY=( $(compgen -W "${change_subcommands}" -- "${cur}") ) ;;
                     history) COMPREPLY=( $(compgen -W "${history_subcommands}" -- "${cur}") ) ;;
-                    commit) COMPREPLY=( $(compgen -W "${commit_subcommands}" -- "${cur}") ) ;;
                     branch)
                         local existing_branches
                         existing_branches=$(git branch --format="%(refname:short)" 2>/dev/null)

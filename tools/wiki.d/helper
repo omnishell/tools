@@ -10,22 +10,33 @@ __helper__() {
             local code_re='`([^`]+)`'
             while [[ "$line" =~ $code_re ]]; do
                 local full="${BASH_REMATCH[0]}" code="${BASH_REMATCH[1]}"
-                
                 code="${code//&/$_amp}"; code="${code//</$_lt}"; code="${code//>/$_gt}"
-                
-                local pre_line="${line%%"$full"*}"
-                local post_line="${line#*"$full"}"
-                line="${pre_line}<inline>${code}</inline>${post_line}"
+                local e_full="${full//\\/\\\\}"; e_full="${e_full//\*/\\*}"; e_full="${e_full//\?/\\?}"; e_full="${e_full//\[/\\[}"; e_full="${e_full//\]/\\]}"
+                local old_line="$line"
+                line="${line/"$e_full"/<inline>${code}</inline>}"
+                if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
         
         if [[ "$line" == *"**"* || "$line" == *"__"* ]]; then
-            while [[ "$line" == *"**"*"**"* ]]; do line="${line/\*\*/<strong>}"; line="${line/\*\*/<\/strong>}"; done
-            while [[ "$line" == *"__"*"__"* ]]; do line="${line/__/<strong>}"; line="${line/__/<\/strong>}"; done
+            while [[ "$line" == *"**"*"**"* ]]; do 
+                local old_line="$line"
+                line="${line/\*\*/<strong>}"; line="${line/\*\*/<\/strong>}"
+                if [[ "$line" == "$old_line" ]]; then break; fi
+            done
+            while [[ "$line" == *"__"*"__"* ]]; do 
+                local old_line="$line"
+                line="${line/__/<strong>}"; line="${line/__/<\/strong>}"
+                if [[ "$line" == "$old_line" ]]; then break; fi
+            done
         fi
         
         if [[ "$line" == *"++"* ]]; then
-            while [[ "$line" == *"++"*"++"* ]]; do line="${line/\+\+/<ins>}"; line="${line/\+\+/<\/ins>}"; done
+            while [[ "$line" == *"++"*"++"* ]]; do 
+                local old_line="$line"
+                line="${line/\+\+/<ins>}"; line="${line/\+\+/<\/ins>}"
+                if [[ "$line" == "$old_line" ]]; then break; fi
+            done
         fi
         
         if [[ "$line" == *"_"*"_"* ]]; then
@@ -33,7 +44,10 @@ __helper__() {
             while [[ "$line" =~ $em_re ]]; do
                 local full="${BASH_REMATCH[0]}" pre="${BASH_REMATCH[1]}" t_content="${BASH_REMATCH[2]}" post="${BASH_REMATCH[3]}"
                 if [[ "$t_content" == *"/"* || "$t_content" == *"="* ]]; then break; fi
-                line="${line/"$full"/${pre}<em>${t_content}</em>${post}}"
+                local e_full="${full//\\/\\\\}"; e_full="${e_full//\*/\\*}"; e_full="${e_full//\?/\\?}"; e_full="${e_full//\[/\\[}"; e_full="${e_full//\]/\\]}"
+                local old_line="$line"
+                line="${line/"$e_full"/${pre}<em>${t_content}</em>${post}}"
+                if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
         
@@ -63,9 +77,7 @@ __helper__() {
                 fi
                 
                 local key="${topic}::${ref_key}" 
-                
                 local target="${WIKI_REFS[$key]:-}"
-                
                 if [[ -z "$target" && -n "$w_name" ]]; then
                     target="${WIKI_REFS[${w_name}::${ENV:-}::${key}]:-}"
                 fi
@@ -82,8 +94,11 @@ __helper__() {
                     done
                 fi
 
+                local e_full="${full//\\/\\\\}"; e_full="${e_full//\*/\\*}"; e_full="${e_full//\?/\\?}"; e_full="${e_full//\[/\\[}"; e_full="${e_full//\]/\\]}"
+                local old_line="$line"
+
                 if [[ -z "$target" ]]; then 
-                    line="${line/"$full"/<span class=\"wiki-ref-err\">${label}</span>}"
+                    line="${line/"$e_full"/<span class=\"wiki-ref-err\">${label}</span>}"
                 else
                     local href=""
                     if [[ "$target" == http://* || "$target" == https://* ]]; then href="$target"
@@ -93,34 +108,44 @@ __helper__() {
                         internal_path="${internal_path//./\/}"; href="/${internal_path}.html"
                         [[ -n "$marker" ]] && href="${href}#${marker}"
                     fi
-                    local pre_line="${line%%"$full"*}"
-                    local post_line="${line#*"$full"}"
-                    line="${pre_line}<a class=\"wiki-topic-${topic}\" href=\"${href}\">${label}</a>${post_line}"
+                    line="${line/"$e_full"/<a class=\"wiki-topic-${topic}\" href=\"${href}\">${label}</a>}"
                 fi
+                if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
         
         if [[ "$line" == *"{{#"* || "$line" == *"{{="* ]]; then
             local mark_re='\{\{\#([a-zA-Z0-9_.-]+)\}\}'
             local anchor_re='\{\{\=([a-zA-Z0-9_.-]+)\}\}'
-            while [[ "$line" =~ $mark_re ]]; do line="${line/"${BASH_REMATCH[0]}"/<span id=\"${BASH_REMATCH[1]}\" class=\"wiki-mark\"></span>}"; done
-            while [[ "$line" =~ $anchor_re ]]; do line="${line/"${BASH_REMATCH[0]}"/<a href=\"#${BASH_REMATCH[1]}\">${BASH_REMATCH[1]}</a>}"; done
+            while [[ "$line" =~ $mark_re ]]; do 
+                local full="${BASH_REMATCH[0]}"
+                local e_full="${full//\\/\\\\}"; e_full="${e_full//\*/\\*}"; e_full="${e_full//\?/\\?}"; e_full="${e_full//\[/\\[}"; e_full="${e_full//\]/\\]}"
+                local old_line="$line"
+                line="${line/"$e_full"/<span id=\"${BASH_REMATCH[1]}\" class=\"wiki-mark\"></span>}"
+                if [[ "$line" == "$old_line" ]]; then break; fi
+            done
+            while [[ "$line" =~ $anchor_re ]]; do 
+                local full="${BASH_REMATCH[0]}"
+                local e_full="${full//\\/\\\\}"; e_full="${e_full//\*/\\*}"; e_full="${e_full//\?/\\?}"; e_full="${e_full//\[/\\[}"; e_full="${e_full//\]/\\]}"
+                local old_line="$line"
+                line="${line/"$e_full"/<a href=\"#${BASH_REMATCH[1]}\">${BASH_REMATCH[1]}</a>}"
+                if [[ "$line" == "$old_line" ]]; then break; fi
+            done
         fi
         
         if [[ "$line" == *"["* && "$line" == *"]("* ]]; then
             local link_re='\[([^]]+)\]\(([^)]+)\)'
             while [[ "$line" =~ $link_re ]]; do
-                local l_match="${BASH_REMATCH[0]}" l_text="${BASH_REMATCH[1]}" l_href="${BASH_REMATCH[2]}"
-                
+                local full="${BASH_REMATCH[0]}" l_text="${BASH_REMATCH[1]}" l_href="${BASH_REMATCH[2]}"
                 if [[ "$l_href" != http://* && "$l_href" != https://* ]]; then
                     if [[ "$l_href" =~ ^(.*)\.(md|markdown|MD|MARKDOWN)([ \t#].*)?$ ]]; then
                         l_href="${BASH_REMATCH[1]}.html${BASH_REMATCH[3]}"
                     fi
                 fi
-                
-                local pre_line="${line%%"$l_match"*}"
-                local post_line="${line#*"$l_match"}"
-                line="${pre_line}<a href=\"${l_href}\">${l_text}</a>${post_line}"
+                local e_full="${full//\\/\\\\}"; e_full="${e_full//\*/\\*}"; e_full="${e_full//\?/\\?}"; e_full="${e_full//\[/\\[}"; e_full="${e_full//\]/\\]}"
+                local old_line="$line"
+                line="${line/"$e_full"/<a href=\"${l_href}\">${l_text}</a>}"
+                if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
     } 
@@ -404,7 +429,6 @@ __helper__() {
                     f_len=$max_last_col_len
                 fi
                 local field=""
-                
                 if [[ $st -lt $row_len ]]; then
                     field="${row_str:$st:$f_len}"
                     field="${field#"${field%%[![:space:]]*}"}"; field="${field%"${field##*[![:space:]]}"}"
@@ -448,9 +472,15 @@ __helper__() {
             table_html+="<p><a href=\"#\" class=\"table-caption\">${caption_line}</a></p>"$'\n'
         fi
         table_html+="</div>"$'\n'
+
+        local enc_url="$(__json_escape "/${pagename//./\/}.html")"
+        local enc_headers="$(__json_escape "$header_line")"
+        local enc_lines="$(__json_escape "${table_buffer[*]}")"
+        SEARCH_INDEX_TABLES+="{\"url\":\"$enc_url\",\"headers\":\"$enc_headers\",\"columns\":\"$num_columns\",\"lines\":\"$enc_lines\"},"$'\n'
+
         content+="${table_html}"
     }
-
+    
     __build_featured_menu() {
         __log "Building Featured Menu..." -t info -l wiki
         local -a _featured_list=()
@@ -1081,6 +1111,16 @@ __helper__() {
         content+="${out_html}"
     } 
 
+    __json_escape() {
+        local s="$1"
+        s="${s//\\/\\\\}"
+        s="${s//\"/\\\"}"
+        s="${s//$'\n'/\\n}"
+        s="${s//$'\r'/}"
+        s="${s//$'\t'/\\t}"
+        printf "%s" "$s"
+    }
+
     __render_def() {
         if [[ ${#def_buffer[@]} -eq 0 ]]; then return; fi
         
@@ -1122,15 +1162,12 @@ __helper__() {
         
         local d_term_key="$(__slugify "$d_term")"
         local d_context_key="$(__slugify "$d_context")"
-        
         local anchor_id="def-${d_context_key}-${d_term_key}"
         
         if [[ -n "$w_name" && -n "$d_context_key" && -n "$d_term_key" ]]; then
             declare -p WIKI_REFS >/dev/null 2>&1 || declare -g -A WIKI_REFS=()
-            
             WIKI_REFS["def::${d_context_key}.${d_term_key}"]="${pagename}:${anchor_id}"
             WIKI_REFS["${w_name}::${ENV:-}::def::${d_context_key}.${d_term_key}"]="${pagename}:${anchor_id}"
-            __wiki_save
         fi
 
         d_idea="$(__parse_multiline_blocks "$d_idea")"
@@ -1152,7 +1189,6 @@ __helper__() {
                 r_item="${r_item%"${r_item##*[![:space:]]}"}"
                 
                 local r_key="$(__slugify "$r_item")"
-                
                 if [[ -n "$r_key" ]]; then
                     line="{{def:${r_key}:${r_item}}}"
                     __parse_inline
@@ -1161,15 +1197,12 @@ __helper__() {
             done
             line="$temp_line"
             rel_out+="    </ul>"
-            
             d_related="$rel_out"
         fi
         
         local html="<def id=\"${anchor_id}\">"$'\n'
-        
         html+="<div class=\"def_div\">"$'\n'
         html+="    <span class=\"def_prefix\">def: </span><span class=\"def_term\">${d_term}</span> <span class=\"def_context_paren\">(</span><span class=\"def_context\">${d_context}</span><span class=\"def_context_paren\">)</span><br>"$'\n'
-        
         html+="    <div class=\"def_inner_div\">"$'\n'
         html+="        <span class=\"def_idea_prefix\">idea: </span><div class=\"def_idea_text\">${d_idea}</div>"$'\n'
         html+="    </div>"$'\n'
@@ -1186,12 +1219,18 @@ __helper__() {
             html+="        ${d_related}"$'\n'
             html+="    </div>"$'\n'
         fi
-        
         html+="</div>"$'\n'
         html+="</def>"$'\n'
-        
+
+        local enc_url="$(__json_escape "/${pagename//./\/}.html#${anchor_id}")"
+        local enc_term="$(__json_escape "$d_term")"
+        local enc_idea="$(__json_escape "$d_idea")"
+        local enc_details="$(__json_escape "$d_details")"
+        local enc_related="$(__json_escape "$d_related")"
+        SEARCH_INDEX_DEFS+="{\"url\":\"$enc_url\",\"term\":\"$enc_term\",\"idea\":\"$enc_idea\",\"details\":\"$enc_details\",\"related\":\"$enc_related\"},"$'\n'
+
         content+="${html}"
-    }  
+    } 
     __render_page() {
         local file="$1" pagename="$2" out_path="$3" current_dir="$4"
         local h_regex='^(#{1,6})\ +(.*)'
@@ -1398,12 +1437,24 @@ __helper__() {
                 "{{ now }}") t_val="$now" ;;
             esac
             
-            while [[ "$rendered" == *"$search"* ]]; do
-                rendered="${rendered%%"$search"*}${t_val}${rendered#*"$search"}"
-            done
+            rendered="${rendered//"$search"/$t_val}"
         done
+
+        local plain_content=""
+        local rem="$content"
+        while [[ "$rem" == *"<"*">"* ]]; do
+            plain_content+="${rem%%<*}"
+            rem="${rem#*>}"
+        done
+        plain_content+="$rem"
+
+        local enc_url="$(__json_escape "/${pagename//./\/}.html")"
+        local enc_pagename="$(__json_escape "$pagename")"
+        local enc_category="$(__json_escape "$current_dir")"
+        local enc_content="$(__json_escape "$plain_content")"
+        SEARCH_INDEX_PAGES+="{\"url\":\"$enc_url\",\"pagename\":\"$enc_pagename\",\"category\":\"$enc_category\",\"content\":\"$enc_content\"},"$'\n'
         
         printf "%s" "$rendered" > "$out_path"
         __log "Rendered -> $out_path" -t success -l wiki
-    }
+    } 
 }

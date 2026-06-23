@@ -342,178 +342,200 @@ FLAGS:
     }
 
     __wiki__.build() {
-        declare -p WIKIS >/dev/null 2>&1 || declare -g -a WIKIS=()
-        local target="$1"; shift || true
-        local rebuild=0
-        if [[ "$target" == "--rebuild" || -z "$target" ]]; then 
-            rebuild=1
-            target="${WIKIS[0]}"
-        fi
-        
-        local o_cont="" o_dist="" o_tmpl="" o_stat=""
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                -c|--contents) o_cont="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
-                -d|--dist) o_dist="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
-                -t|--templates|--template) o_tmpl="$2"; shift 2 ;;
-                -s|--static) o_stat="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
-                --rebuild) rebuild=1; shift ;;
-                *) shift ;;
-            esac
-        done
+    declare -g SEARCH_INDEX_PAGES="" SEARCH_INDEX_TABLES="" SEARCH_INDEX_DEFS=""
 
-        local w_name="${target%%.*}"
-        local p_name=""
-        if [[ "$target" == *.* ]]; then p_name="${target#*.}"; fi
-        
-        if [[ -z "$w_name" ]]; then
-            __log "No wiki specified or registered." -t error -l wiki
-            return 1
-        fi
-        
-        local w_config="${WIKI_VARS[$w_name]:-}"
-        if [[ -z "$w_config" ]]; then
-            __log "Wiki '$w_name' is not configured." -t error -l wiki
-            return 1
-        fi
+    declare -p WIKIS >/dev/null 2>&1 || declare -g -a WIKIS=()
+    local target="$1"; shift || true
+    local rebuild=0
+    if [[ "$target" == "--rebuild" || -z "$target" ]]; then 
+        rebuild=1
+        target="${WIKIS[0]}"
+    fi
+    
+    local o_cont="" o_dist="" o_tmpl="" o_stat=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -c|--contents) o_cont="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+            -d|--dist) o_dist="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+            -t|--templates|--template) o_tmpl="$2"; shift 2 ;;
+            -s|--static) o_stat="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+            --rebuild) rebuild=1; shift ;;
+            *) shift ;;
+        esac
+    done
 
-        local SOURCEDIR="" BUILDDIR="" TEMPLATEDIR="" STATICDIR=""
+    local w_name="${target%%.*}"
+    local p_name=""
+    if [[ "$target" == *.* ]]; then p_name="${target#*.}"; fi
+    
+    if [[ -z "$w_name" ]]; then
+        __log "No wiki specified or registered." -t error -l wiki
+        return 1
+    fi
+    
+    local w_config="${WIKI_VARS[$w_name]:-}"
+    if [[ -z "$w_config" ]]; then
+        __log "Wiki '$w_name' is not configured." -t error -l wiki
+        return 1
+    fi
+
+    local SOURCEDIR="" BUILDDIR="" TEMPLATEDIR="" STATICDIR=""
+    local OIFS="$IFS"; IFS=','
+    local pair k v
+    for pair in $w_config; do
+        k="${pair%%:*}" v="${pair#*:}"
+        case "$k" in
+            content) SOURCEDIR="$v" ;;
+            dist) BUILDDIR="$v" ;;
+            template) TEMPLATEDIR="$v" ;;
+            static) STATICDIR="$v" ;;
+        esac
+    done
+    IFS="$OIFS"
+    
+    [[ -n "$o_cont" ]] && SOURCEDIR="$o_cont"
+    [[ -n "$o_dist" ]] && BUILDDIR="$o_dist"
+    [[ -n "$o_tmpl" ]] && TEMPLATEDIR="$o_tmpl"
+    [[ -n "$o_stat" ]] && STATICDIR="$o_stat"
+
+    unset _pages WIKI_MENU_HTML WIKI_FEATURED_HTML PAGE_TITLES PAGE_WEIGHTS
+    declare -g -a _pages=()
+    declare -g WIKI_MENU_HTML="" WIKI_FEATURED_HTML=""
+    declare -gA PAGE_TITLES=() PAGE_WEIGHTS=()
+
+    if [[ -z "${WIKI_PAGES[$w_name]:-}" ]]; then
+        __log "WIKI_PAGES empty for '$w_name'. Building dynamically from '$SOURCEDIR'." -t info -l wiki
+        while IFS= read -r -d '' file; do
+            local rel_path="${file#$SOURCEDIR/}"
+            local no_ext="${rel_path%.md}"
+            local slug="${no_ext//\//.}"
+            _pages+=("$slug")
+            WIKI_PAGE_VARS["${w_name}::${slug}"]="path:${file}"
+        done < <(find "$SOURCEDIR" -type f -name "*.md" -print0)
+    else
         local OIFS="$IFS"; IFS=','
-        local pair k v
-        for pair in $w_config; do
+        local p
+        for p in ${WIKI_PAGES[$w_name]}; do _pages+=("$p"); done
+        IFS="$OIFS"
+    fi
+
+    local p
+    for p in "${_pages[@]}"; do
+        local p_vars="${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
+        local file="${p_vars##*path:}"
+        file="${file%%,*}"
+        local fm_title="" fm_weight="0"
+        if [[ -f "$file" ]]; then
+            fm_title="$(__wiki_get_fm_val "$file" "title" || true)"
+            fm_weight="$(__wiki_get_fm_val "$file" "weight" || true)"
+            [[ -z "$fm_weight" ]] && fm_weight="0"
+        fi
+        PAGE_TITLES["$p"]="$fm_title"
+        PAGE_WEIGHTS["$p"]="$fm_weight"
+    done
+
+    __log "Cleaning and preparing environment for '$w_name'..." -t info -l wiki
+    rm -rf "$BUILDDIR"/* 2>/dev/null || true
+    mkdir -p "$BUILDDIR/_static"
+
+    if [ -d "$STATICDIR" ]; then cp -r "$STATICDIR"/* "$BUILDDIR/_static/" 2>/dev/null || true; fi
+
+    local -a _global_pages=() _nested_pages=()
+    local entry
+    for entry in "${_pages[@]}"; do
+        local -a parts=()
+        local OIFS="$IFS"; IFS='.'; read -ra parts <<< "$entry"; IFS="$OIFS"
+        if [ "${#parts[@]}" -ge 2 ]; then _nested_pages+=("$entry")
+        else _global_pages+=("${parts[0]}"); fi
+    done
+
+    __build_featured_menu
+    __build_sidebar_menu
+    
+    declare -gA DIR_FILES_MAP=()
+    for p in "${_pages[@]}"; do
+        local map_p_name="${p##*.}" map_p_dir="" map_p_url=""
+        local disp_name="${PAGE_TITLES[$p]:-}"
+        [[ -z "$disp_name" ]] && disp_name="$map_p_name"
+        if [[ "$p" == *.* ]]; then
+            local p_dir_raw="${p%.*}"
+            map_p_dir="${p_dir_raw//./\/}"; map_p_url="${map_p_dir}/${map_p_name}.html"
+        else
+            map_p_dir="."; map_p_url="${map_p_name}.html"
+        fi
+        DIR_FILES_MAP["$map_p_dir"]+="<li><a href=\"/${map_p_url}\">${disp_name}</a></li>"$'\n'
+    done
+    
+    local -a build_targets=()
+    if [[ -n "$p_name" ]]; then build_targets=("$p_name")
+    else build_targets=("${_pages[@]}"); fi
+
+    local file_count=0
+    for p in "${build_targets[@]}"; do
+        file_count=$((file_count + 1))
+        local p_vars="${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
+        local file="" p_tmpl=""
+        local OIFS="$IFS"; IFS=','
+        for pair in $p_vars; do
             k="${pair%%:*}" v="${pair#*:}"
             case "$k" in
-                content) SOURCEDIR="$v" ;;
-                dist) BUILDDIR="$v" ;;
-                template) TEMPLATEDIR="$v" ;;
-                static) STATICDIR="$v" ;;
+                path) file="$v" ;;
+                template) p_tmpl="$v" ;;
             esac
         done
         IFS="$OIFS"
-        
-        [[ -n "$o_cont" ]] && SOURCEDIR="$o_cont"
-        [[ -n "$o_dist" ]] && BUILDDIR="$o_dist"
-        [[ -n "$o_tmpl" ]] && TEMPLATEDIR="$o_tmpl"
-        [[ -n "$o_stat" ]] && STATICDIR="$o_stat"
 
-        unset _pages WIKI_MENU_HTML WIKI_FEATURED_HTML PAGE_TITLES PAGE_WEIGHTS
-        declare -g -a _pages=()
-        declare -g WIKI_MENU_HTML="" WIKI_FEATURED_HTML=""
-        declare -gA PAGE_TITLES=() PAGE_WEIGHTS=()
+        if [[ ! -f "$file" ]]; then continue; fi
 
-        if [[ -z "${WIKI_PAGES[$w_name]:-}" ]]; then
-            __log "WIKI_PAGES empty for '$w_name'. Building dynamically from '$SOURCEDIR'." -t info -l wiki
-            while IFS= read -r -d '' file; do
-                local rel_path="${file#$SOURCEDIR/}"
-                local no_ext="${rel_path%.md}"
-                local slug="${no_ext//\//.}"
-                _pages+=("$slug")
-                WIKI_PAGE_VARS["${w_name}::${slug}"]="path:${file}"
-            done < <(find "$SOURCEDIR" -type f -name "*.md" -print0)
-        else
-            local OIFS="$IFS"; IFS=','
-            local p
-            for p in ${WIKI_PAGES[$w_name]}; do _pages+=("$p"); done
-            IFS="$OIFS"
+        local page_tmpl_raw="${p_tmpl:-$TEMPLATEDIR}"
+        if [[ -n "${WIKI_TEMPLATE_VARS[$page_tmpl_raw]:-}" ]]; then
+            page_tmpl_raw="${WIKI_TEMPLATE_VARS[$page_tmpl_raw]}"
+        elif [[ -d "$page_tmpl_raw" ]]; then
+            page_tmpl_raw="${page_tmpl_raw}/layout.html"
         fi
-
-        local p
-        for p in "${_pages[@]}"; do
-            local p_vars="${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
-            local file="${p_vars##*path:}"
-            file="${file%%,*}"
-            local fm_title="" fm_weight="0"
-            if [[ -f "$file" ]]; then
-                fm_title="$(__wiki_get_fm_val "$file" "title" || true)"
-                fm_weight="$(__wiki_get_fm_val "$file" "weight" || true)"
-                [[ -z "$fm_weight" ]] && fm_weight="0"
-            fi
-            PAGE_TITLES["$p"]="$fm_title"
-            PAGE_WEIGHTS["$p"]="$fm_weight"
-        done
-
-        __log "Cleaning and preparing environment for '$w_name'..." -t info -l wiki
-        rm -rf "$BUILDDIR"/* 2>/dev/null || true
-        mkdir -p "$BUILDDIR/_static"
-
-        if [ -d "$STATICDIR" ]; then cp -r "$STATICDIR"/* "$BUILDDIR/_static/" 2>/dev/null || true; fi
-
-        local -a _global_pages=() _nested_pages=()
-        local entry
-        for entry in "${_pages[@]}"; do
-            local -a parts=()
-            local OIFS="$IFS"; IFS='.'; read -ra parts <<< "$entry"; IFS="$OIFS"
-            if [ "${#parts[@]}" -ge 2 ]; then _nested_pages+=("$entry")
-            else _global_pages+=("${parts[0]}"); fi
-        done
-
-        __build_featured_menu
-        __build_sidebar_menu
         
-        declare -gA DIR_FILES_MAP=()
-        for p in "${_pages[@]}"; do
-            local map_p_name="${p##*.}" map_p_dir="" map_p_url=""
-            local disp_name="${PAGE_TITLES[$p]:-}"
-            [[ -z "$disp_name" ]] && disp_name="$map_p_name"
-            if [[ "$p" == *.* ]]; then
-                local p_dir_raw="${p%.*}"
-                map_p_dir="${p_dir_raw//./\/}"; map_p_url="${map_p_dir}/${map_p_name}.html"
-            else
-                map_p_dir="."; map_p_url="${map_p_name}.html"
-            fi
-            DIR_FILES_MAP["$map_p_dir"]+="<li><a href=\"/${map_p_url}\">${disp_name}</a></li>"$'\n'
-        done
+        if [[ ! -f "$page_tmpl_raw" ]]; then
+            __log "Template file missing for page $p at $page_tmpl_raw" -t error -l wiki
+            continue
+        fi
         
-        local -a build_targets=()
-        if [[ -n "$p_name" ]]; then build_targets=("$p_name")
-        else build_targets=("${_pages[@]}"); fi
+        local RAW_LAYOUT
+        read -r -d '' RAW_LAYOUT < "$page_tmpl_raw" || true
+        local -a layout_lines
+        mapfile -t layout_lines <<< "$RAW_LAYOUT"
 
-        local file_count=0
-        for p in "${build_targets[@]}"; do
-            file_count=$((file_count + 1))
-            local p_vars="${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
-            local file="" p_tmpl=""
-            local OIFS="$IFS"; IFS=','
-            for pair in $p_vars; do
-                k="${pair%%:*}" v="${pair#*:}"
-                case "$k" in
-                    path) file="$v" ;;
-                    template) p_tmpl="$v" ;;
-                esac
-            done
-            IFS="$OIFS"
+        local pagename="$p"
+        local out_path="$BUILDDIR/${p//./\/}.html"
+        local current_dir="${p%.*}"
+        if [[ "$current_dir" == "$p" ]]; then current_dir="."; fi
+        mkdir -p "${out_path%/*}"
+        
+        __render_page "$file" "$pagename" "$out_path" "$current_dir"
+    done
 
-            if [[ ! -f "$file" ]]; then continue; fi
+    __wiki_save
 
-            local page_tmpl_raw="${p_tmpl:-$TEMPLATEDIR}"
-            if [[ -n "${WIKI_TEMPLATE_VARS[$page_tmpl_raw]:-}" ]]; then
-                page_tmpl_raw="${WIKI_TEMPLATE_VARS[$page_tmpl_raw]}"
-            elif [[ -d "$page_tmpl_raw" ]]; then
-                page_tmpl_raw="${page_tmpl_raw}/layout.html"
-            fi
-            
-            if [[ ! -f "$page_tmpl_raw" ]]; then
-                __log "Template file missing for page $p at $page_tmpl_raw" -t error -l wiki
-                continue
-            fi
-            
-            local RAW_LAYOUT
-            read -r -d '' RAW_LAYOUT < "$page_tmpl_raw" || true
-            local -a layout_lines
-            mapfile -t layout_lines <<< "$RAW_LAYOUT"
+    SEARCH_INDEX_PAGES="${SEARCH_INDEX_PAGES%,$'\n'}"
+    SEARCH_INDEX_TABLES="${SEARCH_INDEX_TABLES%,$'\n'}"
+    SEARCH_INDEX_DEFS="${SEARCH_INDEX_DEFS%,$'\n'}"
 
-            local pagename="$p"
-            local out_path="$BUILDDIR/${p//./\/}.html"
-            local current_dir="${p%.*}"
-            if [[ "$current_dir" == "$p" ]]; then current_dir="."; fi
-            mkdir -p "${out_path%/*}"
-            
-            __render_page "$file" "$pagename" "$out_path" "$current_dir"
-        done
+    cat <<EOF > "$BUILDDIR/index.json"
+{
+  "pages": [
+    $SEARCH_INDEX_PAGES
+  ],
+  "tables": [
+    $SEARCH_INDEX_TABLES
+  ],
+  "defs": [
+    $SEARCH_INDEX_DEFS
+  ]
+}
+EOF
 
-        unset _pages WIKI_MENU_HTML WIKI_FEATURED_HTML DIR_FILES_MAP layout_lines PAGE_TITLES PAGE_WEIGHTS
-        return 0
-    }
+    unset _pages WIKI_MENU_HTML WIKI_FEATURED_HTML DIR_FILES_MAP layout_lines PAGE_TITLES PAGE_WEIGHTS
+    return 0
+}   
 
     __wiki__.serve() {
         local w_name="$1"

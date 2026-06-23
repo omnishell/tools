@@ -38,18 +38,28 @@ __helper__() {
         fi
         
         if [[ "$line" == *"{{"*":"*"}}"* ]]; then
-            local topic_re='\{\{[[:space:]]*([a-zA-Z0-9_-]+):([a-zA-Z0-9_.-]+)(:([^}]+))?[[:space:]]*\}\}'
+            local topic_re='\{\{[[:space:]]*([a-zA-Z0-9_-]+):([^:}]+)(:([^}]+))?[[:space:]]*\}\}'
             while [[ "$line" =~ $topic_re ]]; do
                 local full="${BASH_REMATCH[0]}"
                 local topic="${BASH_REMATCH[1]}"
-                local ref_key="${BASH_REMATCH[2]}"
+                local raw_ref="${BASH_REMATCH[2]}"
                 local label="${BASH_REMATCH[4]}"
                 
+                raw_ref="${raw_ref#"${raw_ref%%[![:space:]]*}"}"
+                raw_ref="${raw_ref%"${raw_ref##*[![:space:]]}"}"
+                
                 if [[ -z "$label" ]]; then
-                    label="$ref_key"
+                    label="$raw_ref"
                 else
                     label="${label#"${label%%[![:space:]]*}"}"
                     label="${label%"${label##*[![:space:]]}"}"
+                fi
+                
+                local ref_key=""
+                if type __slugify >/dev/null 2>&1; then
+                    ref_key="$(__slugify "$raw_ref")"
+                else
+                    ref_key="${raw_ref//[^a-zA-Z0-9_.-]/}"
                 fi
                 
                 local key="${topic}::${ref_key}" 
@@ -73,7 +83,7 @@ __helper__() {
                 fi
 
                 if [[ -z "$target" ]]; then 
-                    line="${line/"$full"/<span class=\"wiki-topic-error\">${label}</span>}"
+                    line="${line/"$full"/<span class=\"wiki-ref-err\">${label}</span>}"
                 else
                     local href=""
                     if [[ "$target" == http://* || "$target" == https://* ]]; then href="$target"
@@ -113,6 +123,21 @@ __helper__() {
                 line="${pre_line}<a href=\"${l_href}\">${l_text}</a>${post_line}"
             done
         fi
+    } 
+
+    __slugify() {
+        local s="${1,,}"
+        s="${s// /-}"
+        
+        s="${s//á/a}"; s="${s//à/a}"; s="${s//ã/a}"; s="${s//â/a}"; s="${s//ä/a}"
+        s="${s//é/e}"; s="${s//è/e}"; s="${s//ê/e}"; s="${s//ë/e}"
+        s="${s//í/i}"; s="${s//ì/i}"; s="${s//î/i}"; s="${s//ï/i}"
+        s="${s//ó/o}"; s="${s//ò/o}"; s="${s//õ/o}"; s="${s//ô/o}"; s="${s//ö/o}"
+        s="${s//ú/u}"; s="${s//ù/u}"; s="${s//û/u}"; s="${s//ü/u}"
+        s="${s//ç/c}"; s="${s//ñ/n}"
+        
+        s="${s//[^a-z0-9_.-]/}"
+        echo "$s"
     }
 
     __parse_multiline_blocks() {
@@ -457,14 +482,7 @@ __helper__() {
     __build_sidebar_menu() {
         __log "Building Top Menu Tree..." -t info -l wiki
 
-        WIKI_MENU_HTML="<style>
-.sub-dir > details > summary::before { content: \"\" !important; display: none !important; }
-.sub-dir > details > summary { list-style: none !important; }
-.sub-dir > details > summary::-webkit-details-marker { display: none !important; }
-.sidebar-ul-inner, .sidebar-ul-inner-1 { padding-left: 0 !important; margin-left: 0 !important; }
-.sidebar-li { padding-left: 0 !important; margin-left: 0 !important; list-style: none !important; }
-.tree-line { font-family: 'IBM Plex Mono', monospace; white-space: pre; color: #888; font-size: 13px; }
-</style>"$'\n'"<ul class=\"sidebar-ul\">"$'\n'
+        WIKI_MENU_HTML="<ul class=\"sidebar-ul\">"$'\n'
 
         local -a sorted_pages=()
         if [ ${#_nested_pages[@]} -gt 0 ]; then
@@ -476,20 +494,18 @@ __helper__() {
             )
         fi
 
-        local -a current_path=() path_is_last=()
+        local -a current_path=()
         local idx
 
         for idx in "${!sorted_pages[@]}"; do
             local entry="${sorted_pages[$idx]}"
             if [[ -z "$entry" ]]; then continue; fi
-            local next_entry="${sorted_pages[$((idx+1))]:-}"
             
-            local -a parts=() next_parts=()
-            local OIFS="$IFS"; IFS='.'; read -ra parts <<< "$entry"; IFS='.'; read -ra next_parts <<< "$next_entry"; IFS="$OIFS"
+            local -a parts=()
+            local OIFS="$IFS"; IFS='.'; read -ra parts <<< "$entry"; IFS="$OIFS"
             
             local page_name="${parts[${#parts[@]}-1]}"
             local -a dir_parts=("${parts[@]:0:${#parts[@]}-1}")
-            local -a next_dir_parts=("${next_parts[@]:0:${#next_parts[@]}-1}")
             
             local common_len=0
             while [[ $common_len -lt ${#current_path[@]} && $common_len -lt ${#dir_parts[@]} && "${current_path[$common_len]}" == "${dir_parts[$common_len]}" ]]; do
@@ -497,60 +513,18 @@ __helper__() {
             done
 
             local i
-            for (( i=${#current_path[@]}-1; i>=common_len; i-- )); do WIKI_MENU_HTML+="</ul></details></li>"$'\n'; done
+            for (( i=${#current_path[@]}-1; i>=common_len; i-- )); do 
+                WIKI_MENU_HTML+="</ul></details></li>"$'\n'
+            done
 
             for (( i=common_len; i<${#dir_parts[@]}; i++ )); do
                 local dir="${dir_parts[$i]}"
-                local is_last_dir=1
+                local css_class="sidebar-collapsible"
+                [[ $i -gt 0 ]] && css_class="sidebar-collapsible sub-dir"
                 
-                if [[ ${#next_parts[@]} -gt 0 ]]; then
-                    local match=1
-                    for (( m=0; m<=i; m++ )); do
-                        if [[ "${next_parts[$m]:-}" != "${dir_parts[$m]}" ]]; then match=0; break; fi
-                    done
-                    [[ $match -eq 1 ]] && is_last_dir=0
-                fi
-                
-                path_is_last[$i]=$is_last_dir
-
-                if [[ $i -gt 0 ]]; then
-                    local prefix=""
-                    for (( m=0; m<i; m++ )); do
-                        if [[ $m -eq 0 ]]; then prefix+="    "
-                        else
-                            if [[ ${path_is_last[$m]} -eq 1 ]]; then prefix+="    "
-                            else prefix+="│   "; fi
-                        fi
-                    done
-                    
-                    local branch
-                    if [[ $is_last_dir -eq 1 ]]; then branch="└── "
-                    else branch="├── "; fi
-                    WIKI_MENU_HTML+="<li class=\"sidebar-collapsible sub-dir\"><details open><summary><span class=\"tree-line\">${prefix}${branch}</span><span style=\"font-weight: bold;\">${dir}/</span></summary><ul class=\"sidebar-ul-inner\">"$'\n'
-                else
-                    WIKI_MENU_HTML+="<li class=\"sidebar-collapsible\"><details open><summary><span>${dir}</span></summary><ul class=\"sidebar-ul-inner\">"$'\n'
-                fi
+                WIKI_MENU_HTML+="<li class=\"${css_class}\"><details open><summary>${dir}/</summary><ul class=\"sidebar-ul-inner\">"$'\n'
             done
             
-            local is_last_file=1 match_dir=1
-            for (( m=0; m<${#dir_parts[@]}; m++ )); do
-                if [[ "${next_dir_parts[$m]:-}" != "${dir_parts[$m]}" ]]; then match_dir=0; break; fi
-            done
-            if (( match_dir == 1 )) && [[ ${#next_dir_parts[@]} -eq ${#dir_parts[@]} ]]; then is_last_file=0; fi
-
-            local prefix="" m
-            for (( m=0; m<${#dir_parts[@]}; m++ )); do
-                if [[ $m -eq 0 ]]; then prefix+="    "
-                else
-                    if [[ ${path_is_last[$m]} -eq 1 ]]; then prefix+="    "
-                    else prefix+="│   "; fi
-                fi
-            done
-
-            local fbranch
-            if [[ $is_last_file -eq 1 ]]; then fbranch="└── "
-            else fbranch="├── "; fi
-
             local page_url
             if [[ ${#dir_parts[@]} -gt 0 ]]; then
                 local prev_IFS="$IFS"
@@ -565,13 +539,15 @@ __helper__() {
             local disp_name="${PAGE_TITLES[$entry]:-}"
             [[ -z "$disp_name" ]] && disp_name="$page_name"
 
-            WIKI_MENU_HTML+="<li class=\"sidebar-li\"><span class=\"tree-line\">${prefix}${fbranch}</span><a href=\"/${page_url}\">${disp_name}</a></li>"$'\n'
+            WIKI_MENU_HTML+="<li class=\"sidebar-li\"><a href=\"/${page_url}\">${disp_name}</a></li>"$'\n'
             
             current_path=("${dir_parts[@]}")
         done
 
         local i
-        for (( i=${#current_path[@]}-1; i>=0; i-- )); do WIKI_MENU_HTML+="</ul></details></li>"$'\n'; done
+        for (( i=${#current_path[@]}-1; i>=0; i-- )); do 
+            WIKI_MENU_HTML+="</ul></details></li>"$'\n'
+        done
         WIKI_MENU_HTML+="</ul>"$'\n'
     }
 
@@ -1144,16 +1120,16 @@ __helper__() {
             esac
         fi
         
-        d_term="${d_term//[^a-zA-Z0-9_.-]/}"
-        d_context="${d_context//[^a-zA-Z0-9_.-]/}"
+        local d_term_key="$(__slugify "$d_term")"
+        local d_context_key="$(__slugify "$d_context")"
         
-        local anchor_id="def-${d_context}-${d_term}"
+        local anchor_id="def-${d_context_key}-${d_term_key}"
         
-        if [[ -n "$w_name" && -n "$d_context" && -n "$d_term" ]]; then
+        if [[ -n "$w_name" && -n "$d_context_key" && -n "$d_term_key" ]]; then
             declare -p WIKI_REFS >/dev/null 2>&1 || declare -g -A WIKI_REFS=()
             
-            WIKI_REFS["def::${d_context}.${d_term}"]="${pagename}:${anchor_id}"
-            WIKI_REFS["${w_name}::${ENV:-}::def::${d_context}.${d_term}"]="${pagename}:${anchor_id}"
+            WIKI_REFS["def::${d_context_key}.${d_term_key}"]="${pagename}:${anchor_id}"
+            WIKI_REFS["${w_name}::${ENV:-}::def::${d_context_key}.${d_term_key}"]="${pagename}:${anchor_id}"
             __wiki_save
         fi
 
@@ -1172,9 +1148,13 @@ __helper__() {
             
             local temp_line="$line"
             for r_item in "${r_items[@]}"; do
-                r_item="${r_item//[^a-zA-Z0-9_.-]/}"
-                if [[ -n "$r_item" ]]; then
-                    line="{{def:${r_item}}}"
+                r_item="${r_item#"${r_item%%[![:space:]]*}"}"
+                r_item="${r_item%"${r_item##*[![:space:]]}"}"
+                
+                local r_key="$(__slugify "$r_item")"
+                
+                if [[ -n "$r_key" ]]; then
+                    line="{{def:${r_key}:${r_item}}}"
                     __parse_inline
                     rel_out+="        <li>$line</li>"$'\n'
                 fi
@@ -1186,8 +1166,9 @@ __helper__() {
         fi
         
         local html="<def id=\"${anchor_id}\">"$'\n'
+        
         html+="<div class=\"def_div\">"$'\n'
-        html+="    <span class=\"def_prefix\">def: </span><span class=\"def_term\">${d_term}</span> <span class=\"def_context\">(${d_context})</span><br>"$'\n'
+        html+="    <span class=\"def_prefix\">def: </span><span class=\"def_term\">${d_term}</span> <span class=\"def_context_paren\">(</span><span class=\"def_context\">${d_context}</span><span class=\"def_context_paren\">)</span><br>"$'\n'
         
         html+="    <div class=\"def_inner_div\">"$'\n'
         html+="        <span class=\"def_idea_prefix\">idea: </span><div class=\"def_idea_text\">${d_idea}</div>"$'\n'
@@ -1210,8 +1191,7 @@ __helper__() {
         html+="</def>"$'\n'
         
         content+="${html}"
-    }   
-
+    }  
     __render_page() {
         local file="$1" pagename="$2" out_path="$3" current_dir="$4"
         local h_regex='^(#{1,6})\ +(.*)'
@@ -1259,7 +1239,7 @@ __helper__() {
             fi
             
             if [[ -n "$in_custom_block" ]]; then
-                if [[ "$line" =~ ^[[:space:]]*\{\{\ *end\ *\}\}[[:space:]]*$ ]]; then
+                if [[ "$line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]]; then
                     if [[ "$in_custom_block" == "table" ]]; then __render_table
                     elif [[ "$in_custom_block" == "diagram" ]]; then __render_diagram
                     elif [[ "$in_custom_block" == "def" ]]; then __render_def
@@ -1274,7 +1254,7 @@ __helper__() {
                     content+="$line"$'\n'; continue
                 fi
             else
-                if [[ "$line" =~ ^[[:space:]]*\{\{\ *([a-zA-Z0-9_-]+)\ *\}\}[[:space:]]*$ ]]; then
+                if [[ "$line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
                     local bname="${BASH_REMATCH[1]}"
                     if [[ "$bname" == "table" ]]; then 
                         in_custom_block="table"; table_buffer=(); continue

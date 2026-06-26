@@ -11,9 +11,8 @@ __helper__() {
             while [[ "$line" =~ $code_re ]]; do
                 local full="${BASH_REMATCH[0]}" code="${BASH_REMATCH[1]}"
                 code="${code//&/$_amp}"; code="${code//</$_lt}"; code="${code//>/$_gt}"
-                local e_full="${full//\\/\\\\}"; e_full="${e_full//\*/\\*}"; e_full="${e_full//\?/\\?}"; e_full="${e_full//\[/\\[}"; e_full="${e_full//\]/\\]}"
                 local old_line="$line"
-                line="${line/"$e_full"/<inline>${code}</inline>}"
+                line="${line/"$full"/<inline>${code}</inline>}"
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
@@ -44,9 +43,8 @@ __helper__() {
             while [[ "$line" =~ $em_re ]]; do
                 local full="${BASH_REMATCH[0]}" pre="${BASH_REMATCH[1]}" t_content="${BASH_REMATCH[2]}" post="${BASH_REMATCH[3]}"
                 if [[ "$t_content" == *"/"* || "$t_content" == *"="* ]]; then break; fi
-                local e_full="${full//\\/\\\\}"; e_full="${e_full//\*/\\*}"; e_full="${e_full//\?/\\?}"; e_full="${e_full//\[/\\[}"; e_full="${e_full//\]/\\]}"
                 local old_line="$line"
-                line="${line/"$e_full"/${pre}<em>${t_content}</em>${post}}"
+                line="${line/"$full"/${pre}<em>${t_content}</em>${post}}"
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
@@ -93,12 +91,10 @@ __helper__() {
                         fi
                     done
                 fi
-
-                local e_full="${full//\\/\\\\}"; e_full="${e_full//\*/\\*}"; e_full="${e_full//\?/\\?}"; e_full="${e_full//\[/\\[}"; e_full="${e_full//\]/\\]}"
+                
                 local old_line="$line"
-
                 if [[ -z "$target" ]]; then 
-                    line="${line/"$e_full"/<span class=\"wiki-ref-err\">${label}</span>}"
+                    line="${line/"$full"/<span class=\"wiki-ref-err\">${label}</span>}"
                 else
                     local href=""
                     if [[ "$target" == http://* || "$target" == https://* ]]; then href="$target"
@@ -108,7 +104,7 @@ __helper__() {
                         internal_path="${internal_path//./\/}"; href="/${internal_path}.html"
                         [[ -n "$marker" ]] && href="${href}#${marker}"
                     fi
-                    line="${line/"$e_full"/<a class=\"wiki-topic-${topic}\" href=\"${href}\">${label}</a>}"
+                    line="${line/"$full"/<a class=\"wiki-topic-${topic}\" href=\"${href}\">${label}</a>}"
                 fi
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
@@ -119,16 +115,14 @@ __helper__() {
             local anchor_re='\{\{\=([a-zA-Z0-9_.-]+)\}\}'
             while [[ "$line" =~ $mark_re ]]; do 
                 local full="${BASH_REMATCH[0]}"
-                local e_full="${full//\\/\\\\}"; e_full="${e_full//\*/\\*}"; e_full="${e_full//\?/\\?}"; e_full="${e_full//\[/\\[}"; e_full="${e_full//\]/\\]}"
                 local old_line="$line"
-                line="${line/"$e_full"/<span id=\"${BASH_REMATCH[1]}\" class=\"wiki-mark\"></span>}"
+                line="${line/"$full"/<span id=\"${BASH_REMATCH[1]}\" class=\"wiki-mark\"></span>}"
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
             while [[ "$line" =~ $anchor_re ]]; do 
                 local full="${BASH_REMATCH[0]}"
-                local e_full="${full//\\/\\\\}"; e_full="${e_full//\*/\\*}"; e_full="${e_full//\?/\\?}"; e_full="${e_full//\[/\\[}"; e_full="${e_full//\]/\\]}"
                 local old_line="$line"
-                line="${line/"$e_full"/<a href=\"#${BASH_REMATCH[1]}\">${BASH_REMATCH[1]}</a>}"
+                line="${line/"$full"/<a href=\"#${BASH_REMATCH[1]}\">${BASH_REMATCH[1]}</a>}"
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
@@ -142,9 +136,8 @@ __helper__() {
                         l_href="${BASH_REMATCH[1]}.html${BASH_REMATCH[3]}"
                     fi
                 fi
-                local e_full="${full//\\/\\\\}"; e_full="${e_full//\*/\\*}"; e_full="${e_full//\?/\\?}"; e_full="${e_full//\[/\\[}"; e_full="${e_full//\]/\\]}"
                 local old_line="$line"
-                line="${line/"$e_full"/<a href=\"${l_href}\">${l_text}</a>}"
+                line="${line/"$full"/<a href=\"${l_href}\">${l_text}</a>}"
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi

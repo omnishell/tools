@@ -4,7 +4,10 @@ __helper__() {
     declare -gA WIKIS WIKI_VARS WIKI_PAGES WIKI_PAGE_VARS WIKI_TEMPLATES WIKI_TEMPLATE_VARS WIKI_TOPICS WIKI_REFS WIKI_BLOCKS 2>/dev/null || true
 
     __parse_inline() {
-        if [[ "$line" != *[\`\*_+{\[]* ]]; then return; fi
+        if [[ "$line" != *"\`"* && "$line" != *"*"* && "$line" != *"_"* && "$line" != *"+"* && "$line" != *"{"* && "$line" != *"["* && "$line" != *"<"* ]]; then return; fi
+        
+        local -a masked_codes=()
+        local m_idx=0
         
         if [[ "$line" == *"\`"* ]]; then
             local code_re='`([^`]+)`'
@@ -12,9 +15,27 @@ __helper__() {
                 local full="${BASH_REMATCH[0]}" code="${BASH_REMATCH[1]}"
                 code="${code//&/$_amp}"; code="${code//</$_lt}"; code="${code//>/$_gt}"
                 local old_line="$line"
-                line="${line/"$full"/<inline>${code}</inline>}"
+                masked_codes[$m_idx]="<inline>${code}</inline>"
+                line="${line/"$full"/%%MASKED_${m_idx}%%}"
+                ((m_idx++))
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
+        fi
+        
+        if [[ "$line" == *"<pre"* && "$line" == *"</pre>"* ]]; then
+            local temp_line="$line"
+            while [[ "$temp_line" == *"<pre"* && "$temp_line" == *"</pre>"* ]]; do
+                local before_pre="${temp_line%%<pre*}"
+                local rest="${temp_line#*$before_pre}"
+                local full_pre="${rest%%</pre>*}</pre>"
+                
+                local old_line="$temp_line"
+                masked_codes[$m_idx]="$full_pre"
+                temp_line="${temp_line/"$full_pre"/%%MASKED_${m_idx}%%}"
+                ((m_idx++))
+                if [[ "$temp_line" == "$old_line" ]]; then break; fi
+            done
+            line="$temp_line"
         fi
         
         if [[ "$line" == *"**"* || "$line" == *"__"* ]]; then
@@ -141,6 +162,10 @@ __helper__() {
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
+        
+        for (( i=0; i<m_idx; i++ )); do
+            line="${line//%%MASKED_${i}%%/${masked_codes[$i]}}"
+        done
     } 
 
     __slugify() {
@@ -162,17 +187,52 @@ __helper__() {
         local text="$1"
         local out=""
         local in_inner=0
+        local in_html_pre=0
         local code_lang=""
+        local list_depth=0
+        local -a LIST_INDENTS=() LIST_TYPES=()
         
         while IFS= read -r l || [[ -n "$l" ]]; do
             if (( in_inner == 0 )); then
-                # Detecta abertura de bloco de código interno
                 if [[ "$l" =~ ^[[:space:]]*\`\`\`([a-zA-Z0-9_+-]*)[[:space:]]*$ ]]; then
+                    local content=""
+                    __close_lists
+                    out+="$content"
                     in_inner=1
                     code_lang="${BASH_REMATCH[1]}"
                     out+="${out:+$'\n'}<pre><code class=\"language-${code_lang}\">"$'\n'
                 else
-                    # Processa inline markdown normalmente para linhas de texto
+                    if (( in_html_pre == 1 )); then
+                        if [[ "$l" == *"</pre>"* ]]; then in_html_pre=0; fi
+                        out+="${out:+$'\n'}$l"
+                        continue
+                    fi
+                    if [[ "$l" == *"<pre"* && "$l" != *"</pre>"* ]]; then
+                        in_html_pre=1
+                        out+="${out:+$'\n'}$l"
+                        continue
+                    fi
+
+                    if [[ "$l" =~ ^([[:space:]]*)([-*+]|[0-9]+\.)[[:space:]]+(.*)$ ]]; then
+                        local indent="${#BASH_REMATCH[1]}" marker="${BASH_REMATCH[2]}" item_content="${BASH_REMATCH[3]}"
+                        local temp_line="$line"
+                        if [[ "$marker" =~ ^[0-9] ]]; then __ol "$indent" "$item_content"; else __ul "$indent" "$item_content"; fi
+                        l="$line"
+                        line="$temp_line"
+                    else
+                        if (( list_depth > 0 )); then
+                            if [[ -z "${l//[[:space:]]/}" ]]; then
+                                out+="${out:+$'\n'}<br><br>"
+                                continue
+                            fi
+                            if [[ ! "$l" =~ ^[[:space:]]+ ]]; then 
+                                local content=""
+                                __close_lists
+                                out+="$content"
+                            fi
+                        fi
+                    fi
+
                     local temp_line="$line"
                     line="$l"
                     __parse_inline
@@ -181,7 +241,6 @@ __helper__() {
                     out+="${out:+$'\n'}$l"
                 fi
             else
-                # Detecta fechamento de bloco de código
                 if [[ "${l//[[:space:]]/}" == "\`\`\`" ]]; then
                     in_inner=0
                     out+="</code></pre>"
@@ -191,6 +250,10 @@ __helper__() {
                 fi
             fi
         done <<< "$text"
+        
+        local content=""
+        __close_lists
+        out+="${content}"
         
         echo -n "$out"
     }
@@ -366,7 +429,9 @@ __helper__() {
             fi
         done
         
-        local table_html="<div class=\"captioned-table\">"$'\n'"<table class=\"custom-pre-table\">"$'\n'
+        ((page_table_count++))
+        local table_id="table-${page_table_count}"
+        local table_html="<div id=\"${table_id}\" class=\"captioned-table\">"$'\n'"<table class=\"custom-pre-table\">"$'\n'
         table_html+="<thead>"$'\n'"<tr>"
         
         local j
@@ -386,13 +451,11 @@ __helper__() {
             line="${line//&/&amp;}"; line="${line//</&lt;}"; line="${line//>/&gt;}"
             
             __parse_inline
-
             field="$line"
             line="$temp_line"
             table_html+="<th><p>${field}</p></th>"
         done
         table_html+="</tr>"$'\n'"</thead>"$'\n'"<tbody>"$'\n'
-
         table_html+="<tr class=\"ascii-separator\">"
         for (( j=0; j<num_columns; j++ )); do
             local st=${starts[$j]} f_len=0
@@ -431,7 +494,6 @@ __helper__() {
                     line="${line//&/&amp;}"; line="${line//</&lt;}"; line="${line//>/&gt;}"
                     
                     __parse_inline
-
                     field="$line"
                     line="$temp_line"
                 fi
@@ -439,7 +501,6 @@ __helper__() {
             done
             table_html+="</tr>"$'\n'
         done
-
         if [[ ${#sep_indices[@]} -ge 2 ]]; then
             table_html+="<tr class=\"ascii-separator\">"
             for (( j=0; j<num_columns; j++ )); do
@@ -455,7 +516,6 @@ __helper__() {
             done
             table_html+="</tr>"$'\n'
         fi
-
         table_html+="</tbody>"$'\n'"</table>"$'\n'
         
         if [[ -n "$caption_line" ]]; then
@@ -465,15 +525,14 @@ __helper__() {
             table_html+="<p><a href=\"#\" class=\"table-caption\">${caption_line}</a></p>"$'\n'
         fi
         table_html+="</div>"$'\n'
-
         local enc_url="$(__json_escape "/${pagename//./\/}.html")"
         local enc_headers="$(__json_escape "$header_line")"
         local enc_lines="$(__json_escape "${table_buffer[*]}")"
         SEARCH_INDEX_TABLES+="{\"url\":\"$enc_url\",\"headers\":\"$enc_headers\",\"columns\":\"$num_columns\",\"lines\":\"$enc_lines\"},"$'\n'
-
+        LIST_TABLES_HTML+="<li><a href=\"#${table_id}\">${caption_line:-Table ${page_table_count}}</a></li>"$'\n'
         content+="${table_html}"
     }
-    
+
     __build_featured_menu() {
         __log "Building Featured Menu..." -t info -l wiki
         local -a _featured_list=()
@@ -584,7 +643,7 @@ __helper__() {
         
         local line
         for line in "${diagram_buffer[@]}"; do
-            if [[ "$line" =~ ^(node|term)[[:space:]]*:?[[:space:]]*([^,]+)(,(.*))?$ ]]; then
+            if [[ "$line" =~ ^[[:space:]]*::[[:space:]]*(node|term)[[:space:]]*:?[[:space:]]*([^,]+)(,(.*))?$ ]]; then
                 local name="${BASH_REMATCH[2]}"
                 name="${name#"${name%%[![:space:]]*}"}"; name="${name%"${name##*[![:space:]]}"}"
                 
@@ -597,7 +656,6 @@ __helper__() {
                         n_text="${BASH_REMATCH[1]}"
                         props_str="${props_str//${BASH_REMATCH[0]}/}"
                     fi
-
                     local IFS=','
                     local -a props_array
                     read -ra props_array <<< "$props_str"
@@ -632,7 +690,7 @@ __helper__() {
                 (( y < min_y )) && min_y=$y
                 (( y > max_y )) && max_y=$y
                 
-            elif [[ "$line" =~ ^(arrow|2-arrow)[[:space:]]*:?[[:space:]]*(.*)$ ]]; then
+            elif [[ "$line" =~ ^[[:space:]]*::[[:space:]]*(arrow|2-arrow)[[:space:]]*:?[[:space:]]*(.*)$ ]]; then
                 local a_type="${BASH_REMATCH[1]}"
                 local a_content="${BASH_REMATCH[2]}"
                 
@@ -825,7 +883,6 @@ __helper__() {
                                 size_int=$(( int_part * 100 ))
                             fi
                         fi
-
                         if [[ "$radius" == -* ]]; then sweep=0; fi
                         local rad_val_str="${radius#-}"
                         rad_val_str="${rad_val_str#+}"
@@ -840,7 +897,6 @@ __helper__() {
                             fi
                         fi
                         if (( rad_int > 100 )); then rad_int=100; fi
-
                         dx=$((tx - sx))
                         dy=$((ty - sy))
                         local sign_dx=0 sign_dy=0
@@ -878,7 +934,6 @@ __helper__() {
                                     dist_t=$(( hh_t * L / abs_dy ))
                                 fi
                             fi
-
                             local rem_L=$(( L - dist_s - dist_t ))
                             local padding=$(( rem_L * (100 - size_int) / 200 ))
                             local gap_s=$(( dist_s + padding ))
@@ -887,12 +942,10 @@ __helper__() {
                             local max_gap=$(( L / 2 - 2 ))
                             (( gap_s > max_gap )) && gap_s=$max_gap
                             (( gap_t > max_gap )) && gap_t=$max_gap
-
                             nsx=$(( sx + dx * gap_s / L ))
                             nsy=$(( sy + dy * gap_s / L ))
                             ntx=$(( tx - dx * gap_t / L ))
                             nty=$(( ty - dy * gap_t / L ))
-
                             if (( rad_int > 0 )); then
                                 local rad=$(( L * 100 / (2 * rad_int) ))
                                 local min_rad=$(( L / 2 ))
@@ -947,7 +1000,7 @@ __helper__() {
                                 local gap=$(( L_orth * (100 - size_int) / 200 ))
                                 nsx=$(( esx + sign_dx * gap ))
                                 ntx=$(( etx - sign_dx * gap ))
-                                nsy=$sy nty=$ty
+                                nsx=$sy nty=$ty
                                 d_path="M $nsx $sy L $ntx $ty"
                                 d_path_text="M $ntx $ty L $nsx $sy"
                             elif (( sx == tx )); then
@@ -967,13 +1020,10 @@ __helper__() {
                                 local abs_ety_sy=$(( ety - sy )); abs_ety_sy=${abs_ety_sy#-}
                                 local L_orth=$(( abs_tx_esx + abs_ety_sy ))
                                 local gap=$(( L_orth * (100 - size_int) / 200 ))
-
                                 if (( gap <= abs_tx_esx )); then nsx=$(( esx + sign_dx * gap )); nsy=$sy
                                 else nsx=$tx; nsy=$(( sy + sign_dy * (gap - abs_tx_esx) )); fi
-
                                 if (( gap <= abs_ety_sy )); then ntx=$tx; nty=$(( ety - sign_dy * gap ))
                                 else ntx=$(( tx - sign_dx * (gap - abs_ety_sy) )); nty=$sy; fi
-
                                 if (( nsy == sy && ntx == tx )); then
                                     d_path="M $nsx $nsy L $tx $sy L $ntx $nty"
                                     d_path_text="M $ntx $nty L $tx $sy L $nsx $nsy"
@@ -1026,8 +1076,7 @@ __helper__() {
         done
         
         for term in "${!terms[@]}"; do
-            if [[ "${nodes_w[$term]}" == "0" ]]; then continue; fi 
-        
+            if [[ "${nodes_w[$term]}" == "0" ]]; then continue; fi
             local coords="${terms[$term]}"
             local tx=${coords%,*} ty=${coords#*,}
             
@@ -1075,7 +1124,9 @@ __helper__() {
             layer_nodes+="</text>"$'\n'
         done
         
-        local out_html="<div class=\"diagram-container\" style=\"overflow-x: auto; padding: 1rem;\">"$'\n'
+        ((page_diagram_count++))
+        local diagram_id="diagram-${page_diagram_count}"
+        local out_html="<div id=\"${diagram_id}\" class=\"diagram-container\" style=\"overflow-x: auto; padding: 1rem;\">"$'\n'
         out_html+="<svg width=\"${svg_w}\" height=\"${svg_h}\" viewBox=\"0 0 ${svg_w} ${svg_h}\" xmlns=\"http://www.w3.org/2000/svg\" style=\"max-width: none;\">"$'\n'
         out_html+="<style>
             .diagram-node { fill: #ffffff; stroke: #333333; }
@@ -1101,8 +1152,9 @@ __helper__() {
         out_svg_wrap="</svg>"$'\n'"</div>"$'\n'
         out_html+="${out_svg_wrap}"
         
+        LIST_DIAGRAMS_HTML+="<li><a href=\"#${diagram_id}\">Diagram ${page_diagram_count}</a></li>"$'\n'
         content+="${out_html}"
-    } 
+    }
 
     __json_escape() {
         local s="$1"
@@ -1162,7 +1214,6 @@ __helper__() {
             WIKI_REFS["def::${d_context_key}.${d_term_key}"]="${pagename}:${anchor_id}"
             WIKI_REFS["${w_name}::${ENV:-}::def::${d_context_key}.${d_term_key}"]="${pagename}:${anchor_id}"
         fi
-
         d_idea="$(__parse_multiline_blocks "$d_idea")"
         
         if [[ -n "$d_details" ]]; then
@@ -1214,16 +1265,69 @@ __helper__() {
         fi
         html+="</div>"$'\n'
         html+="</def>"$'\n'
-
         local enc_url="$(__json_escape "/${pagename//./\/}.html#${anchor_id}")"
         local enc_term="$(__json_escape "$d_term")"
         local enc_idea="$(__json_escape "$d_idea")"
         local enc_details="$(__json_escape "$d_details")"
         local enc_related="$(__json_escape "$d_related")"
         SEARCH_INDEX_DEFS+="{\"url\":\"$enc_url\",\"term\":\"$enc_term\",\"idea\":\"$enc_idea\",\"details\":\"$enc_details\",\"related\":\"$enc_related\"},"$'\n'
-
+        
+        LIST_DEFS_HTML+="<li><a href=\"#${anchor_id}\">${d_context:+$d_context.}$d_term</a></li>"$'\n'
         content+="${html}"
-    } 
+    }
+
+    __render_hide() {
+        if [[ ${#hide_buffer[@]} -eq 0 ]]; then return; fi
+        
+        local h_title="" h_hide=""
+        local current_key="" current_val=""
+        
+        local b_line
+        for b_line in "${hide_buffer[@]}"; do
+            if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
+                if [[ -n "$current_key" ]]; then
+                    case "$current_key" in
+                        title) h_title="$current_val" ;;
+                        hide) h_hide="$current_val" ;;
+                    esac
+                fi
+                current_key="${BASH_REMATCH[1]}"
+                current_val="${BASH_REMATCH[2]}"
+                current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                current_val="${current_val%"${current_val##*[![:space:]]}"}"
+            else
+                if [[ -n "$current_key" ]]; then
+                    current_val+=$'\n'"$b_line"
+                fi
+            fi
+        done
+        
+        if [[ -n "$current_key" ]]; then
+            case "$current_key" in
+                title) h_title="$current_val" ;;
+                hide) h_hide="$current_val" ;;
+            esac
+        fi
+        
+        h_hide="$(__parse_multiline_blocks "$h_hide")"
+        
+        local temp_line="$line"
+        line="$h_title"
+        line="${line//&/$_amp}"; line="${line//</$_lt}"; line="${line//>/$_gt}"
+        __parse_inline
+        h_title="$line"
+        line="$temp_line"
+        
+        local html="<details class=\"hide-block\">"$'\n'
+        html+="<summary class=\"hide-title\">${h_title}</summary>"$'\n'
+        html+="<div class=\"hide-content\">"$'\n'
+        html+="${h_hide}"$'\n'
+        html+="</div>"$'\n'
+        html+="</details>"$'\n'
+        
+        content+="${html}"
+    }
+
     __render_page() {
         local file="$1" pagename="$2" out_path="$3" current_dir="$4"
         local h_regex='^(#{1,6})\ +(.*)'
@@ -1232,8 +1336,10 @@ __helper__() {
         if shopt -q patsub_replacement 2>/dev/null; then _amp="\\&amp;"; _lt="\\&lt;"; _gt="\\&gt;"; fi
         
         local content="" in_frontmatter=0 title="$pagename" TOC_HTML="<ul class=\"toc\">"$'\n'
-        local in_code_block=0 in_custom_block="" list_depth=0 was_empty=0 ignore_next_empty=0 set_ignore_this_turn=0 line
-        local -a table_buffer=() diagram_buffer=() def_buffer=() KEYS_STACK=() LIST_INDENTS=() LIST_TYPES=() lines=()
+        local LIST_DEFS_HTML="<ul class=\"list-defs\">"$'\n' LIST_TABLES_HTML="<ul class=\"list-tables\">"$'\n' LIST_DIAGRAMS_HTML="<ul class=\"list-diagrams\">"$'\n'
+        local page_table_count=0 page_diagram_count=0
+        local in_code_block=0 in_html_pre=0 in_custom_block="" list_depth=0 was_empty=0 ignore_next_empty=0 set_ignore_this_turn=0 line
+        local -a table_buffer=() diagram_buffer=() def_buffer=() hide_buffer=() KEYS_STACK=() LIST_INDENTS=() LIST_TYPES=() lines=()
         local -A PAGE_VARS=()
         
         mapfile -t lines < "$file"
@@ -1275,6 +1381,7 @@ __helper__() {
                     if [[ "$in_custom_block" == "table" ]]; then __render_table
                     elif [[ "$in_custom_block" == "diagram" ]]; then __render_diagram
                     elif [[ "$in_custom_block" == "def" ]]; then __render_def
+                    elif [[ "$in_custom_block" == "hide" ]]; then __render_hide
                     elif [[ -n "${WIKI_BLOCKS[$in_custom_block]:-}" ]]; then content+="</div>"$'\n'
                     else content+="</${in_custom_block}>"$'\n'; fi
                     in_custom_block=""; ignore_next_empty=1; continue
@@ -1282,6 +1389,7 @@ __helper__() {
                     if [[ "$in_custom_block" == "table" ]]; then table_buffer+=("$line"); continue; fi
                     if [[ "$in_custom_block" == "diagram" ]]; then diagram_buffer+=("$line"); continue; fi
                     if [[ "$in_custom_block" == "def" ]]; then def_buffer+=("$line"); continue; fi
+                    if [[ "$in_custom_block" == "hide" ]]; then hide_buffer+=("$line"); continue; fi
                     if [[ -n "${WIKI_BLOCKS[$in_custom_block]:-}" ]]; then content+="$line"$'\n'; continue; fi
                     content+="$line"$'\n'; continue
                 fi
@@ -1294,6 +1402,8 @@ __helper__() {
                         in_custom_block="diagram"; diagram_buffer=(); continue
                     elif [[ "$bname" == "def" ]]; then 
                         in_custom_block="def"; def_buffer=(); continue
+                    elif [[ "$bname" == "hide" ]]; then 
+                        in_custom_block="hide"; hide_buffer=(); continue
                     elif [[ -n "${WIKI_BLOCKS[$bname]:-}" ]]; then
                         in_custom_block="$bname"
                         content+="<div class=\"${WIKI_BLOCKS[$bname]}\">"$'\n'
@@ -1314,8 +1424,19 @@ __helper__() {
                     else content+="<pre><code>"$'\n'; fi
                     continue
                 fi
+                
+                if (( in_html_pre == 1 )); then
+                    if [[ "$line" == *"</pre>"* ]]; then in_html_pre=0; fi
+                    content+="${line}"$'\n'
+                    continue
+                fi
+                if [[ "$line" == *"<pre"* && "$line" != *"</pre>"* ]]; then
+                    in_html_pre=1
+                    content+="${line}"$'\n'
+                    continue
+                fi
             fi
-
+            
             if [[ "$line" == *"{{"* ]]; then
                 if [[ "$line" =~ ^\s*\{\{\ *toc\ *\}\}\s*$ ]]; then line="{{TOC_PLACEHOLDER}}"; set_ignore_this_turn=1; fi
                 if [[ "$line" =~ ^\s*\{\{\ *files\ *\}\}\s*$ ]]; then line="{{FILES_PLACEHOLDER}}"; set_ignore_this_turn=1; fi
@@ -1349,7 +1470,6 @@ __helper__() {
             fi
             
             __parse_inline
-
             if [[ -z "${line//[[:space:]]/}" ]]; then
                 if [[ $ignore_next_empty -eq 1 ]]; then :
                 elif [[ $was_empty -eq 0 ]]; then content+="<br><br>"$'\n'; was_empty=1; fi
@@ -1361,11 +1481,111 @@ __helper__() {
         
         __close_lists
         TOC_HTML+="</ul>"
+        LIST_DEFS_HTML+="</ul>"
+        LIST_TABLES_HTML+="</ul>"
+        LIST_DIAGRAMS_HTML+="</ul>"
         
         local FILES_HTML="<ul class=\"dir-files\">"$'\n'"${DIR_FILES_MAP[$current_dir]}"$'\n'"</ul>"
         
         content="${content//\{\{TOC_PLACEHOLDER\}\}/$TOC_HTML}"
         content="${content//\{\{FILES_PLACEHOLDER\}\}/$FILES_HTML}"
+        
+        while [[ "$content" =~ \{\{[[:space:]]*list\.(defs|tables|diagrams)(:([^}[:space:]]+))?[[:space:]]*\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local l_type="${BASH_REMATCH[1]}"
+            local l_path="${BASH_REMATCH[3]}"
+            local list_html="<ul class=\"list-${l_type}\">"$'\n'
+            
+            if [[ -z "$l_path" ]]; then
+                if [[ "$l_type" == "defs" ]]; then list_html="$LIST_DEFS_HTML"
+                elif [[ "$l_type" == "tables" ]]; then list_html="$LIST_TABLES_HTML"
+                elif [[ "$l_type" == "diagrams" ]]; then list_html="$LIST_DIAGRAMS_HTML"
+                fi
+            else
+                local target_file=""
+                if [[ "$l_path" == /* ]]; then
+                    target_file="$SOURCEDIR${l_path}"
+                else
+                    target_file="$SOURCEDIR/$current_dir/${l_path}"
+                fi
+                [[ "$target_file" != *.md ]] && target_file="${target_file}.md"
+                
+                local t_dir="$(dirname "$target_file")"
+                local t_base="$(basename "$target_file")"
+                if [[ -d "$t_dir" ]]; then
+                    t_dir="$(cd "$t_dir" 2>/dev/null && pwd)"
+                    target_file="${t_dir}/${t_base}"
+                fi
+                
+                if [[ -f "$target_file" ]]; then
+                    local t_rel="${target_file#$SOURCEDIR/}"
+                    local t_url="/${t_rel%.md}.html"
+                    
+                    local in_block="" item_count=0 def_term="" def_context=""
+                    local -a t_buffer=()
+                    
+                    while IFS= read -r t_line || [[ -n "$t_line" ]]; do
+                        t_line="${t_line%$'\r'}"
+                        if [[ -z "$in_block" ]]; then
+                            if [[ "$t_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
+                                local bname="${BASH_REMATCH[1]}"
+                                if [[ "$l_type" == "tables" && "$bname" == "table" ]]; then in_block="table"; t_buffer=()
+                                elif [[ "$l_type" == "diagrams" && "$bname" == "diagram" ]]; then in_block="diagram"
+                                elif [[ "$l_type" == "defs" && "$bname" == "def" ]]; then in_block="def"; def_term=""; def_context=""
+                                fi
+                            fi
+                        else
+                            if [[ "$t_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]]; then
+                                if [[ "$in_block" == "def" ]]; then
+                                    local d_term_key="$(__slugify "$def_term")"
+                                    local d_context_key="$(__slugify "$def_context")"
+                                    local anchor_id="def-${d_context_key}-${d_term_key}"
+                                    list_html+="<li><a href=\"${t_url}#${anchor_id}\">${def_context:+$def_context.}$def_term</a></li>"$'\n'
+                                elif [[ "$in_block" == "table" ]]; then
+                                    ((item_count++))
+                                    local caption="" sep_count=0 i
+                                    for ((i=0; i<${#t_buffer[@]}; i++)); do
+                                        if [[ "${t_buffer[$i]}" =~ ^[-=_]{4,} ]]; then ((sep_count++)); fi
+                                    done
+                                    if [[ $sep_count -ge 2 ]]; then
+                                        local found_sep=0
+                                        for ((i=0; i<${#t_buffer[@]}; i++)); do
+                                            if [[ "${t_buffer[$i]}" =~ ^[-=_]{4,} ]]; then ((found_sep++)); continue; fi
+                                            if [[ $found_sep -eq $sep_count ]]; then
+                                                local cl="${t_buffer[$i]}"
+                                                cl="${cl#"${cl%%[![:space:]]*}"}"; cl="${cl%"${cl##*[![:space:]]}"}"
+                                                if [[ -n "$cl" ]]; then caption="$cl"; break; fi
+                                            fi
+                                        done
+                                    fi
+                                    list_html+="<li><a href=\"${t_url}#table-${item_count}\">${caption:-Table ${item_count}}</a></li>"$'\n'
+                                elif [[ "$in_block" == "diagram" ]]; then
+                                    ((item_count++))
+                                    list_html+="<li><a href=\"${t_url}#diagram-${item_count}\">Diagram ${item_count}</a></li>"$'\n'
+                                fi
+                                in_block=""
+                            else
+                                if [[ "$in_block" == "def" ]]; then
+                                    if [[ "$t_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
+                                        local k="${BASH_REMATCH[1]}" v="${BASH_REMATCH[2]}"
+                                        v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+                                        if [[ "$k" == "term" ]]; then def_term="$v"; fi
+                                        if [[ "$k" == "context" ]]; then def_context="$v"; fi
+                                    fi
+                                elif [[ "$in_block" == "table" ]]; then
+                                    t_buffer+=("$t_line")
+                                fi
+                            fi
+                        fi
+                    done < "$target_file"
+                else
+                    list_html+="<li><span class=\"wiki-ref-err\">File not found: ${l_path}</span></li>"$'\n'
+                fi
+                list_html+="</ul>"
+            fi
+            
+            content="${content//"$full_match"/$list_html}"
+        done
         
         local PAGE_LAYOUT="" skip=0 ll
         for ll in "${layout_lines[@]}"; do
@@ -1400,7 +1620,6 @@ __helper__() {
                     ll="${ll//"$full_match"/$val}"
                 done
             fi
-
             if [[ "$ll" == *"{{ wiki.frontmatter."* ]]; then
                 while [[ "$ll" =~ \{\{\ *wiki\.frontmatter\.([a-zA-Z0-9_.-]+)\ *\}\} ]]; do
                     local full_match="${BASH_REMATCH[0]}"
@@ -1432,7 +1651,6 @@ __helper__() {
             
             rendered="${rendered//"$search"/$t_val}"
         done
-
         local plain_content=""
         local rem="$content"
         while [[ "$rem" == *"<"*">"* ]]; do
@@ -1440,7 +1658,6 @@ __helper__() {
             rem="${rem#*>}"
         done
         plain_content+="$rem"
-
         local enc_url="$(__json_escape "/${pagename//./\/}.html")"
         local enc_pagename="$(__json_escape "$pagename")"
         local enc_category="$(__json_escape "$current_dir")"

@@ -1382,6 +1382,7 @@ __helper__() {
                     elif [[ "$in_custom_block" == "diagram" ]]; then __render_diagram
                     elif [[ "$in_custom_block" == "def" ]]; then __render_def
                     elif [[ "$in_custom_block" == "hide" ]]; then __render_hide
+                    elif [[ "$in_custom_block" == "globals" ]]; then :
                     elif [[ -n "${WIKI_BLOCKS[$in_custom_block]:-}" ]]; then content+="</div>"$'\n'
                     else content+="</${in_custom_block}>"$'\n'; fi
                     in_custom_block=""; ignore_next_empty=1; continue
@@ -1390,6 +1391,7 @@ __helper__() {
                     if [[ "$in_custom_block" == "diagram" ]]; then diagram_buffer+=("$line"); continue; fi
                     if [[ "$in_custom_block" == "def" ]]; then def_buffer+=("$line"); continue; fi
                     if [[ "$in_custom_block" == "hide" ]]; then hide_buffer+=("$line"); continue; fi
+                    if [[ "$in_custom_block" == "globals" ]]; then continue; fi
                     if [[ -n "${WIKI_BLOCKS[$in_custom_block]:-}" ]]; then content+="$line"$'\n'; continue; fi
                     content+="$line"$'\n'; continue
                 fi
@@ -1404,6 +1406,8 @@ __helper__() {
                         in_custom_block="def"; def_buffer=(); continue
                     elif [[ "$bname" == "hide" ]]; then 
                         in_custom_block="hide"; hide_buffer=(); continue
+                    elif [[ "$bname" == "globals" ]]; then 
+                        in_custom_block="globals"; continue
                     elif [[ -n "${WIKI_BLOCKS[$bname]:-}" ]]; then
                         in_custom_block="$bname"
                         content+="<div class=\"${WIKI_BLOCKS[$bname]}\">"$'\n'
@@ -1666,5 +1670,5 @@ __helper__() {
         
         printf "%s" "$rendered" > "$out_path"
         __log "Rendered -> $out_path" -t success -l wiki
-    } 
+    }
 }

@@ -517,6 +517,22 @@ FLAGS:
 
         if [[ ! -f "$file" ]]; then continue; fi
 
+        local in_globals=0 g_line
+        while IFS= read -r g_line || [[ -n "$g_line" ]]; do
+            g_line="${g_line%$'\r'}"
+            if (( in_globals == 0 )); then
+                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals=1
+            else
+                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
+                if [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*template:[[:space:]]*(.*)$ ]]; then
+                    local temp_tmpl="${BASH_REMATCH[1]}"
+                    temp_tmpl="${temp_tmpl#"${temp_tmpl%%[![:space:]]*}"}"
+                    temp_tmpl="${temp_tmpl%"${temp_tmpl##*[![:space:]]}"}"
+                    [[ -n "$temp_tmpl" ]] && p_tmpl="${TEMPLATEDIR}/${temp_tmpl}"
+                fi
+            fi
+        done < "$file"
+
         local page_tmpl_raw="${p_tmpl:-$TEMPLATEDIR}"
         if [[ -n "${WIKI_TEMPLATE_VARS[$page_tmpl_raw]:-}" ]]; then
             page_tmpl_raw="${WIKI_TEMPLATE_VARS[$page_tmpl_raw]}"
@@ -569,7 +585,6 @@ FLAGS:
 
     __wiki_save
 
-    # Safely strip trailing newlines and commas so JSON is always valid
     SEARCH_INDEX_PAGES="${SEARCH_INDEX_PAGES%$'\n'}"
     SEARCH_INDEX_PAGES="${SEARCH_INDEX_PAGES%,}"
 
@@ -595,8 +610,7 @@ EOF
 
     unset _pages WIKI_MENU_HTML WIKI_FEATURED_HTML DIR_FILES_MAP layout_lines PAGE_TITLES PAGE_WEIGHTS
     return 0
-}
-
+} 
     __wiki__.serve() {
         local w_name="$1"
         shift || true

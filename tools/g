@@ -100,8 +100,7 @@ EOF
                 git push origin "${1:-HEAD}"
                 ;;
             git) 
-                shift;
-                git "$@" 
+                shift; git "$@" 
                 ;;
             change) 
                 shift
@@ -348,8 +347,7 @@ tmp="$file.tmp"
 : > "$tmp"
 target="$G_RENAME_TARGET"
 while IFS= read -r line; do
-    case "$line" in "pick $target "*) echo "reword ${line#pick }" >> "$tmp" ;;
-    *) echo "$line" >> "$tmp" ;; esac
+    case "$line" in "pick $target "*) echo "reword ${line#pick }" >> "$tmp" ;; *) echo "$line" >> "$tmp" ;; esac
 done < "$file"
 mv "$tmp" "$file"
 EOF
@@ -608,25 +606,41 @@ EOF
                 case "$subcmd" in
                     -h|--help) echo "Usage: g tag {new|ls|rm|send|edit}" >&2; return 0 ;;
                     new)
-                        local tagtype="$1" msg=""
+                        local tagtype="$1" msg="" custom_tag=""
                         shift || true
+                        if [[ "$tagtype" == "custom" ]]; then
+                            custom_tag="$1"
+                            shift || true
+                            if [[ $# -gt 0 && "$1" != -m && "$1" != --message ]]; then
+                                msg="$*"
+                                set --
+                            fi
+                        fi
                         while [[ $# -gt 0 ]]; do
                             case "$1" in -m|--message) msg="$2"; shift 2 ;; *) shift ;; esac
                         done
                         [[ -z "$tagtype" ]] && return 1
                         local latest_tag new_tag
-                        latest_tag=$(git describe --tags --abbrev=0 2>/dev/null)
-                        if [[ -z "$latest_tag" ]]; then new_tag="v0.1.0"
+                        if [[ "$tagtype" == "custom" ]]; then
+                            [[ -z "$custom_tag" ]] && return 1
+                            new_tag="$custom_tag"
                         else
-                            local major minor patch
-                            IFS='.' read -r major minor patch <<< "${latest_tag#v}"
-                            case "$tagtype" in
-                                patch) patch=$((patch + 1));;
-                                minor) minor=$((minor + 1)); patch=0;;
-                                major) major=$((major + 1)); minor=0; patch=0;;
-                                *) return 1 ;;
-                            esac
-                            new_tag="v$major.$minor.$patch"
+                            latest_tag=$(git describe --tags --abbrev=0 2>/dev/null)
+                            if [[ -z "$latest_tag" ]]; then new_tag="v0.1.0"
+                            else
+                                local major minor patch
+                                IFS='.' read -r major minor patch <<< "${latest_tag#v}"
+                                major=${major:-0}
+                                minor=${minor:-0}
+                                patch=${patch:-0}
+                                case "$tagtype" in
+                                    patch) patch=$((patch + 1));;
+                                    minor) minor=$((minor + 1)); patch=0;;
+                                    major) major=$((major + 1)); minor=0; patch=0;;
+                                    *) return 1 ;;
+                                esac
+                                new_tag="v$major.$minor.$patch"
+                            fi
                         fi
                         [[ -n "$msg" ]] && git tag "$new_tag" -m "$msg" || git tag "$new_tag"
                         ;;
@@ -961,8 +975,7 @@ EOF
                 esac
                 ;;
         esac
-    }
-
+    } 
     __g__.__compl__() {
         local cur prev_word
         cur="${COMP_WORDS[COMP_CWORD]}"
@@ -1092,18 +1105,18 @@ EOF
                             rebase|ff)
                                 local local_branches
                                 local_branches=$(git branch --format="%(refname:short)" 2>/dev/null)
-                                COMPREPLY=( $(compgen -W "./HEAD ${local_branches} -r --remote" -- "${cur}") )
+                                COMPREPLY=( $(compgen -W "./HEAD ${local_branches} --remote" -- "${cur}") )
                                 ;;
                             merge)
                                 local local_branches
                                 local_branches=$(git branch --format="%(refname:short)" 2>/dev/null)
-                                COMPREPLY=( $(compgen -W "${local_branches} -m --message" -- "${cur}") )
+                                COMPREPLY=( $(compgen -W "${local_branches} --message" -- "${cur}") )
                                 ;;
                         esac
                         ;;
                     tag|tags)
                         case "${prev_word}" in
-                            new) COMPREPLY=( $(compgen -W "patch minor major" -- "${cur}") ) ;;
+                            new) COMPREPLY=( $(compgen -W "patch minor major custom" -- "${cur}") ) ;;
                             rm|send|edit)
                                 local existing_tags
                                 existing_tags=$(git tag -l 2>/dev/null)
@@ -1145,7 +1158,7 @@ EOF
                             ;;
                     esac
                 elif [[ "${COMP_WORDS[1]}" == "tag" && "${COMP_WORDS[2]}" == "edit" ]]; then
-                    COMPREPLY=( $(compgen -W "--name --desc --message -m" -- "${cur}") )
+                    COMPREPLY=( $(compgen -W "--name --desc --message" -- "${cur}") )
                 elif [[ "${COMP_WORDS[1]}" == "remote" && "${COMP_WORDS[2]}" == "update" ]]; then
                     COMPREPLY=( $(compgen -W "--name --url" -- "${cur}") )
                 elif [[ "$W" == "branch" && "${COMP_WORDS[2]}" == "rename" ]]; then

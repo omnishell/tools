@@ -5,7 +5,31 @@ _WIKI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 __wiki__() {
 
     __load script helper --from "$_WIKI_DIR/wiki.d"
+    __load script build --from "$_WIKI_DIR/wiki.d"
     
+    __fm_val() {
+        local file="$1" key="$2" in_fm=0 line
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line="${line%$'\r'}"
+            if (( in_fm == 0 )); then
+                [[ "$line" =~ ^---\s*$ ]] && in_fm=1
+                continue
+            elif (( in_fm == 1 )); then
+                [[ "$line" =~ ^---\s*$ ]] && break
+                if [[ "$line" =~ ^[[:space:]]*${key}:(.*)$ ]]; then
+                    local val="${BASH_REMATCH[1]}"
+                    val="${val#"${val%%[![:space:]]*}"}"
+                    val="${val%"${val##*[![:space:]]}"}"
+                    val="${val#\"}"; val="${val%\"}"
+                    val="${val#\'}"; val="${val%\'}"
+                    printf "%s" "$val"
+                    return 0
+                fi
+            fi
+        done < "$file"
+        return 1
+    }
+
     __wiki__.__help__() {
         echo """ABOUT:
     omni wiki generator and management tool
@@ -110,7 +134,7 @@ FLAGS:
             WIKI_PAGES[$w_name]="$joined_pages"
         fi
         
-        __wiki_save
+        __save
         __log "Configured wiki: $w_name" -t success -l wiki
     }
 
@@ -129,7 +153,7 @@ FLAGS:
             [[ "$i" == "${w_name}::"* ]] && unset 'WIKI_PAGE_VARS[$i]'
         done
         
-        __wiki_save
+        __save
         __log "Removed wiki: $w_name" -t success -l wiki
     }
 
@@ -153,7 +177,7 @@ FLAGS:
                 for t in "${WIKI_TEMPLATES[@]}"; do [[ "$t" == "$tmpl" ]] && { exists=1; break; }; done
                 [[ $exists -eq 0 ]] && WIKI_TEMPLATES+=("$tmpl")
                 WIKI_TEMPLATE_VARS["$tmpl"]="$t_path"
-                __wiki_save
+                __save
                 __log "Saved template $tmpl" -t success -l wiki
                 ;;
             rm)
@@ -164,7 +188,7 @@ FLAGS:
                 done
                 WIKI_TEMPLATES=("${new_tmpls[@]}")
                 unset 'WIKI_TEMPLATE_VARS[$tmpl]'
-                __wiki_save
+                __save
                 __log "Removed template $tmpl" -t success -l wiki
                 ;;
             *) __log "Unknown template command: $subcmd" -t error -l wiki; return 1 ;;
@@ -204,7 +228,7 @@ FLAGS:
                 local var_str="path:${p_path}"
                 [[ -n "$p_tmpl" ]] && var_str+=",template:${p_tmpl}"
                 WIKI_PAGE_VARS["${w_name}::${slug}"]="$var_str"
-                __wiki_save
+                __save
                 __log "Saved page $slug in $w_name" -t success -l wiki
                 ;;
             rm)
@@ -227,7 +251,7 @@ FLAGS:
                 IFS="$OIFS"
                 WIKI_PAGES[$w_name]="$joined_pages"
                 unset 'WIKI_PAGE_VARS['"${w_name}::${p_slug}"']'
-                __wiki_save
+                __save
                 __log "Removed page $p_slug from $w_name" -t success -l wiki
                 ;;
             *) __log "Unknown pages command: $subcmd" -t error -l wiki; return 1 ;;
@@ -257,15 +281,15 @@ FLAGS:
                 declare -p WIKI_TOPICS >/dev/null 2>&1 || declare -g -A WIKI_TOPICS=()
                 
                 WIKI_TOPICS["${w_name}::${env}::${topic}"]="1"
-                __wiki_save
+                __save
                 __log "Saved topic ${topic} (wiki: ${w_name}, env: ${env})" -t success -l wiki
-                ;; 
+                ;;
             rm)
                 local topic="$2" k
                 for k in "${!WIKI_TOPICS[@]}"; do
                     if [[ "$k" == *"::${topic}" ]]; then unset 'WIKI_TOPICS[$k]'; fi
                 done
-                __wiki_save
+                __save
                 __log "Removed topic $topic" -t success -l wiki
                 ;;
             *) __log "Unknown topic command: $subcmd" -t error -l wiki; return 1 ;;
@@ -297,15 +321,15 @@ FLAGS:
                 declare -p WIKI_REFS >/dev/null 2>&1 || declare -g -A WIKI_REFS=()
                 
                 WIKI_REFS["${w_name}::${env}::${topic}::${ref}"]="$val"
-                __wiki_save
+                __save
                 __log "Saved reference ${ref} for topic ${topic}" -t success -l wiki
-                ;; 
+                ;;
             rm)
                 local ref="$2" k
                 for k in "${!WIKI_REFS[@]}"; do
                     if [[ "$k" == *"::${ref}" ]]; then unset 'WIKI_REFS[$k]'; fi
                 done
-                __wiki_save
+                __save
                 __log "Removed references for $ref" -t success -l wiki
                 ;;
             *) __log "Unknown ref command: $subcmd" -t error -l wiki; return 1 ;;
@@ -328,13 +352,13 @@ FLAGS:
                     case "$1" in -c|--class) cls="$2"; shift 2 ;; *) shift ;; esac
                 done
                 WIKI_BLOCKS["$blk"]="$cls"
-                __wiki_save
+                __save
                 __log "Saved block $blk with class $cls" -t success -l wiki
                 ;;
             rm)
                 local blk="$2"
                 unset 'WIKI_BLOCKS[$blk]'
-                __wiki_save
+                __save
                 __log "Removed block $blk" -t success -l wiki
                 ;;
             *) __log "Unknown block command: $subcmd" -t error -l wiki; return 1 ;;
@@ -342,275 +366,83 @@ FLAGS:
     }
 
     __wiki__.build() {
-    declare -g SEARCH_INDEX_PAGES="" SEARCH_INDEX_TABLES="" SEARCH_INDEX_DEFS=""
-
-    declare -p WIKIS >/dev/null 2>&1 || declare -g -a WIKIS=()
-    local target="$1"; shift || true
-    local rebuild=0
-    if [[ "$target" == "--rebuild" || -z "$target" ]]; then 
-        rebuild=1
-        target="${WIKIS[0]}"
-    fi
-    
-    local o_cont="" o_dist="" o_tmpl="" o_stat="" o_cache=""
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -c|--contents) o_cont="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
-            -d|--dist) o_dist="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
-            -t|--templates|--template) o_tmpl="$2"; shift 2 ;;
-            -s|--static) o_stat="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
-            -C|--cache) 
-                if [[ "$2" = /* ]]; then o_cache="$2"; else o_cache="$PWD/$2"; fi
-                shift 2 ;;
-            --rebuild) rebuild=1; shift ;;
-            *) shift ;;
-        esac
-    done
-
-    local w_name="${target%%.*}"
-    local p_name=""
-    if [[ "$target" == *.* ]]; then p_name="${target#*.}"; fi
-    
-    if [[ -z "$w_name" ]]; then
-        __log "No wiki specified or registered." -t error -l wiki
-        return 1
-    fi
-    
-    local w_config="${WIKI_VARS[$w_name]:-}"
-    if [[ -z "$w_config" ]]; then
-        __log "Wiki '$w_name' is not configured." -t error -l wiki
-        return 1
-    fi
-
-    local SOURCEDIR="" BUILDDIR="" TEMPLATEDIR="" STATICDIR=""
-    local OIFS="$IFS"; IFS=','
-    local pair k v
-    for pair in $w_config; do
-        k="${pair%%:*}" v="${pair#*:}"
-        case "$k" in
-            content) SOURCEDIR="$v" ;;
-            dist) BUILDDIR="$v" ;;
-            template) TEMPLATEDIR="$v" ;;
-            static) STATICDIR="$v" ;;
-        esac
-    done
-    IFS="$OIFS"
-    
-    [[ -n "$o_cont" ]] && SOURCEDIR="$o_cont"
-    [[ -n "$o_dist" ]] && BUILDDIR="$o_dist"
-    [[ -n "$o_tmpl" ]] && TEMPLATEDIR="$o_tmpl"
-    [[ -n "$o_stat" ]] && STATICDIR="$o_stat"
-
-    unset _pages WIKI_MENU_HTML WIKI_FEATURED_HTML PAGE_TITLES PAGE_WEIGHTS
-    declare -g -a _pages=()
-    declare -g WIKI_MENU_HTML="" WIKI_FEATURED_HTML=""
-    declare -gA PAGE_TITLES=() PAGE_WEIGHTS=()
-
-    if [[ -z "${WIKI_PAGES[$w_name]:-}" ]]; then
-        __log "WIKI_PAGES empty for '$w_name'. Building dynamically from '$SOURCEDIR'." -t info -l wiki
-        while IFS= read -r -d '' file; do
-            local rel_path="${file#$SOURCEDIR/}"
-            local no_ext="${rel_path%.md}"
-            local slug="${no_ext//\//.}"
-            _pages+=("$slug")
-            WIKI_PAGE_VARS["${w_name}::${slug}"]="path:${file}"
-        done < <(find "$SOURCEDIR" -type f -name "*.md" -print0)
-    else
-        local OIFS="$IFS"; IFS=','
-        local p
-        for p in ${WIKI_PAGES[$w_name]}; do _pages+=("$p"); done
-        IFS="$OIFS"
-    fi
-
-    local p
-    for p in "${_pages[@]}"; do
-        local p_vars="${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
-        local file="${p_vars##*path:}"
-        file="${file%%,*}"
-        local fm_title="" fm_weight="0"
-        if [[ -f "$file" ]]; then
-            fm_title="$(__wiki_get_fm_val "$file" "title" || true)"
-            fm_weight="$(__wiki_get_fm_val "$file" "weight" || true)"
-            [[ -z "$fm_weight" ]] && fm_weight="0"
+        declare -g SEARCH_INDEX_PAGES="" SEARCH_INDEX_TABLES="" SEARCH_INDEX_DEFS=""
+        declare -p WIKIS >/dev/null 2>&1 || declare -g -a WIKIS=()
+        
+        local target="$1"; shift || true
+        local rebuild=0
+        if [[ "$target" == "--rebuild" || -z "$target" ]]; then 
+            rebuild=1
+            target="${WIKIS[0]:-}"
         fi
-        PAGE_TITLES["$p"]="$fm_title"
-        PAGE_WEIGHTS["$p"]="$fm_weight"
-    done
+        
+        local o_cont="" o_dist="" o_tmpl="" o_stat="" o_cache=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                -c|--contents) o_cont="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+                -d|--dist) o_dist="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+                -t|--templates|--template) o_tmpl="$2"; shift 2 ;;
+                -s|--static) o_stat="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+                -C|--cache) 
+                    if [[ "$2" = /* ]]; then o_cache="$2"; else o_cache="$PWD/$2"; fi
+                    shift 2 ;;
+                --rebuild) rebuild=1; shift ;;
+                *) shift ;;
+            esac
+        done
 
-    local cache_dir="${o_cache:-$BUILDDIR/.cache}"
-    local cache_file="$cache_dir/build_cache"
-    local tmpl_cache_file="$cache_dir/tmpl_cache"
-    mkdir -p "$cache_dir" 2>/dev/null
-
-    local tmpl_hash=""
-    if [[ -d "$TEMPLATEDIR" ]]; then
-        tmpl_hash=$(find "$TEMPLATEDIR" -type f -exec cksum {} + | cksum | awk '{print $1 "_" $2}')
-    fi
-    local old_tmpl_hash=""
-    [[ -f "$tmpl_cache_file" ]] && old_tmpl_hash=$(cat "$tmpl_cache_file")
-
-    local force_rebuild=$rebuild
-    if [[ "$tmpl_hash" != "$old_tmpl_hash" ]]; then
-        force_rebuild=1
-        echo "$tmpl_hash" > "$tmpl_cache_file"
-        > "$cache_file"
-    fi
-
-    if [[ -z "$p_name" && $force_rebuild -eq 1 ]]; then
-        __log "Cleaning and preparing environment for '$w_name'..." -t info -l wiki
-        find "$BUILDDIR" -mindepth 1 -maxdepth 1 ! -name "$(basename "$cache_dir")" -exec rm -rf {} + 2>/dev/null || true
-    fi
-    
-    mkdir -p "$BUILDDIR/_static"
-    if [ -d "$STATICDIR" ]; then cp -r "$STATICDIR"/* "$BUILDDIR/_static/" 2>/dev/null || true; fi
-
-    declare -A CACHE_HASHES=()
-    if [[ -f "$cache_file" ]]; then
-        while read -r h f; do
-            [[ -n "$f" ]] && CACHE_HASHES["$f"]="$h"
-        done < "$cache_file"
-    fi
-    local -a _global_pages=() _nested_pages=()
-    local entry
-    for entry in "${_pages[@]}"; do
-        local -a parts=()
-        local OIFS="$IFS"; IFS='.'; read -ra parts <<< "$entry"; IFS="$OIFS"
-        if [ "${#parts[@]}" -ge 2 ]; then _nested_pages+=("$entry")
-        else _global_pages+=("${parts[0]}"); fi
-    done
-
-    __build_featured_menu
-    __build_sidebar_menu
-    
-    declare -gA DIR_FILES_MAP=()
-    for p in "${_pages[@]}"; do
-        local map_p_name="${p##*.}" map_p_dir="" map_p_url=""
-        local disp_name="${PAGE_TITLES[$p]:-}"
-        [[ -z "$disp_name" ]] && disp_name="$map_p_name"
-        if [[ "$p" == *.* ]]; then
-            local p_dir_raw="${p%.*}"
-            map_p_dir="${p_dir_raw//./\/}"; map_p_url="${map_p_dir}/${map_p_name}.html"
-        else
-            map_p_dir="."; map_p_url="${map_p_name}.html"
+        local w_name="${target%%.*}"
+        local p_name=""
+        if [[ "$target" == *.* ]]; then p_name="${target#*.}"; fi
+        
+        if [[ -z "$w_name" ]]; then
+            __log "No wiki specified or registered." -t error -l wiki
+            return 1
         fi
-        DIR_FILES_MAP["$map_p_dir"]+="<li><a href=\"/${map_p_url}\">${disp_name}</a></li>"$'\n'
-    done
-    
-    local -a build_targets=()
-    if [[ -n "$p_name" ]]; then build_targets=("$p_name")
-    else build_targets=("${_pages[@]}"); fi
+        
+        local w_config="${WIKI_VARS[$w_name]:-}"
+        if [[ -z "$w_config" ]]; then
+            __log "Wiki '$w_name' is not configured." -t error -l wiki
+            return 1
+        fi
 
-    local file_count=0
-    for p in "${build_targets[@]}"; do
-        file_count=$((file_count + 1))
-        local p_vars="${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
-        local file="" p_tmpl=""
+        local SOURCEDIR="" BUILDDIR="" TEMPLATEDIR="" STATICDIR=""
         local OIFS="$IFS"; IFS=','
-        for pair in $p_vars; do
+        local pair k v
+        for pair in $w_config; do
             k="${pair%%:*}" v="${pair#*:}"
             case "$k" in
-                path) file="$v" ;;
-                template) p_tmpl="$v" ;;
+                content) SOURCEDIR="$v" ;;
+                dist) BUILDDIR="$v" ;;
+                template) TEMPLATEDIR="$v" ;;
+                static) STATICDIR="$v" ;;
             esac
         done
         IFS="$OIFS"
-
-        if [[ ! -f "$file" ]]; then continue; fi
-
-        local in_globals=0 g_line
-        while IFS= read -r g_line || [[ -n "$g_line" ]]; do
-            g_line="${g_line%$'\r'}"
-            if (( in_globals == 0 )); then
-                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals=1
-            else
-                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
-                if [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*template:[[:space:]]*(.*)$ ]]; then
-                    local temp_tmpl="${BASH_REMATCH[1]}"
-                    temp_tmpl="${temp_tmpl#"${temp_tmpl%%[![:space:]]*}"}"
-                    temp_tmpl="${temp_tmpl%"${temp_tmpl##*[![:space:]]}"}"
-                    [[ -n "$temp_tmpl" ]] && p_tmpl="${TEMPLATEDIR}/${temp_tmpl}"
-                fi
-            fi
-        done < "$file"
-
-        local page_tmpl_raw="${p_tmpl:-$TEMPLATEDIR}"
-        if [[ -n "${WIKI_TEMPLATE_VARS[$page_tmpl_raw]:-}" ]]; then
-            page_tmpl_raw="${WIKI_TEMPLATE_VARS[$page_tmpl_raw]}"
-        elif [[ -d "$page_tmpl_raw" ]]; then
-            page_tmpl_raw="${page_tmpl_raw}/layout.html"
-        fi
         
-        if [[ ! -f "$page_tmpl_raw" ]]; then
-            __log "Template file missing for page $p at $page_tmpl_raw" -t error -l wiki
-            continue
-        fi
+        [[ -n "$o_cont" ]] && SOURCEDIR="$o_cont"
+        [[ -n "$o_dist" ]] && BUILDDIR="$o_dist"
+        [[ -n "$o_tmpl" ]] && TEMPLATEDIR="$o_tmpl"
+        [[ -n "$o_stat" ]] && STATICDIR="$o_stat"
 
-        local pagename="$p"
-        local out_path="$BUILDDIR/${p//./\/}.html"
-        local current_dir="${p%.*}"
-        if [[ "$current_dir" == "$p" ]]; then current_dir="."; fi
-        mkdir -p "${out_path%/*}"
-
-        local file_hash=$(cksum "$file" | awk '{print $1 "_" $2}')
-        if [[ $force_rebuild -eq 0 && "${CACHE_HASHES[$file]:-}" == "$file_hash" && -f "$out_path" ]]; then
-            [[ -f "$cache_dir/${pagename}_pages.json" ]] && SEARCH_INDEX_PAGES+=$(cat "$cache_dir/${pagename}_pages.json")
-            [[ -f "$cache_dir/${pagename}_tables.json" ]] && SEARCH_INDEX_TABLES+=$(cat "$cache_dir/${pagename}_tables.json")
-            [[ -f "$cache_dir/${pagename}_defs.json" ]] && SEARCH_INDEX_DEFS+=$(cat "$cache_dir/${pagename}_defs.json")
-            __log "Skipped rendering $pagename (unmodified)" -t info -l wiki
-            continue
-        fi
+        local -a _pages=() _global_pages=() _nested_pages=() build_targets=()
+        local WIKI_MENU_HTML="" WIKI_FEATURED_HTML=""
+        local -A PAGE_TITLES=() PAGE_WEIGHTS=() DIR_FILES_MAP=() CACHE_HASHES=()
         
-        local RAW_LAYOUT
-        read -r -d '' RAW_LAYOUT < "$page_tmpl_raw" || true
-        local -a layout_lines
-        mapfile -t layout_lines <<< "$RAW_LAYOUT"
+        local cache_dir="${o_cache:-$BUILDDIR/.cache}"
+        local cache_file="$cache_dir/build_cache"
+        local tmpl_cache_file="$cache_dir/tmpl_cache"
+        local force_rebuild=$rebuild
 
-        local old_pages_len=${#SEARCH_INDEX_PAGES}
-        local old_tables_len=${#SEARCH_INDEX_TABLES}
-        local old_defs_len=${#SEARCH_INDEX_DEFS}
+        __build_init_pages
+        __build_cache
+        __build_menus
+        __build_compile
+        __build_index
 
-        __render_page "$file" "$pagename" "$out_path" "$current_dir"
-        
-        printf "%s" "${SEARCH_INDEX_PAGES:$old_pages_len}" > "$cache_dir/${pagename}_pages.json"
-        printf "%s" "${SEARCH_INDEX_TABLES:$old_tables_len}" > "$cache_dir/${pagename}_tables.json"
-        printf "%s" "${SEARCH_INDEX_DEFS:$old_defs_len}" > "$cache_dir/${pagename}_defs.json"
+        return 0
+    }
 
-        CACHE_HASHES["$file"]="$file_hash"
-    done
-
-    > "$cache_file"
-    for f in "${!CACHE_HASHES[@]}"; do
-        echo "${CACHE_HASHES[$f]} $f" >> "$cache_file"
-    done
-
-    __wiki_save
-
-    SEARCH_INDEX_PAGES="${SEARCH_INDEX_PAGES%$'\n'}"
-    SEARCH_INDEX_PAGES="${SEARCH_INDEX_PAGES%,}"
-
-    SEARCH_INDEX_TABLES="${SEARCH_INDEX_TABLES%$'\n'}"
-    SEARCH_INDEX_TABLES="${SEARCH_INDEX_TABLES%,}"
-
-    SEARCH_INDEX_DEFS="${SEARCH_INDEX_DEFS%$'\n'}"
-    SEARCH_INDEX_DEFS="${SEARCH_INDEX_DEFS%,}"
-
-    cat <<EOF > "$BUILDDIR/index.json"
-{
-  "pages": [
-    $SEARCH_INDEX_PAGES
-  ],
-  "tables": [
-    $SEARCH_INDEX_TABLES
-  ],
-  "defs": [
-    $SEARCH_INDEX_DEFS
-  ]
-}
-EOF
-
-    unset _pages WIKI_MENU_HTML WIKI_FEATURED_HTML DIR_FILES_MAP layout_lines PAGE_TITLES PAGE_WEIGHTS
-    return 0
-} 
     __wiki__.serve() {
         local w_name="$1"
         shift || true

@@ -1,7 +1,5 @@
 #! /bin/bash
-
 __build__() {
-
     __build_init_pages() {
         if [[ -z "${WIKI_PAGES[$w_name]:-}" ]]; then
             __log "WIKI_PAGES empty for '$w_name'. Building dynamically from '$SOURCEDIR'." -t info -l wiki
@@ -18,7 +16,6 @@ __build__() {
             for p in ${WIKI_PAGES[$w_name]}; do _pages+=("$p"); done
             IFS="$OIFS"
         fi
-
         local p
         for p in "${_pages[@]}"; do
             local p_vars="${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
@@ -39,7 +36,6 @@ __build__() {
             else _global_pages+=("${parts[0]}"); fi
         done
     }
-
     __build_cache() {
         mkdir -p "$cache_dir" 2>/dev/null
         local tmpl_hash=""
@@ -48,13 +44,11 @@ __build__() {
         fi
         local old_tmpl_hash=""
         [[ -f "$tmpl_cache_file" ]] && old_tmpl_hash=$(cat "$tmpl_cache_file")
-
         if [[ "$tmpl_hash" != "$old_tmpl_hash" ]]; then
             force_rebuild=1
             echo "$tmpl_hash" > "$tmpl_cache_file"
             > "$cache_file"
         fi
-
         if [[ -z "$p_name" && $force_rebuild -eq 1 ]]; then
             __log "Cleaning and preparing environment for '$w_name'..." -t info -l wiki
             find "$BUILDDIR" -mindepth 1 -maxdepth 1 ! -name "$(basename "$cache_dir")" -exec rm -rf {} + 2>/dev/null || true
@@ -62,14 +56,12 @@ __build__() {
         
         mkdir -p "$BUILDDIR/_static"
         if [ -d "$STATICDIR" ]; then cp -r "$STATICDIR"/* "$BUILDDIR/_static/" 2>/dev/null || true; fi
-
         if [[ -f "$cache_file" ]]; then
             while read -r h f; do
                 [[ -n "$f" ]] && CACHE_HASHES["$f"]="$h"
             done < "$cache_file"
         fi
     }
-
     __build_menus() {
         __partial_menu
         __partial_sidebar
@@ -87,11 +79,9 @@ __build__() {
             DIR_FILES_MAP["$map_p_dir"]+="<li><a href=\"/${map_p_url}\">${disp_name}</a></li>"$'\n'
         done
     }
-
     __build_compile() {
         if [[ -n "$p_name" ]]; then build_targets=("$p_name")
         else build_targets=("${_pages[@]}"); fi
-
         for p in "${build_targets[@]}"; do
             local p_vars="${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
             local file="" p_tmpl=""
@@ -104,9 +94,7 @@ __build__() {
                 esac
             done
             IFS="$OIFS"
-
             if [[ ! -f "$file" ]]; then continue; fi
-
             local in_globals=0 g_line
             while IFS= read -r g_line || [[ -n "$g_line" ]]; do
                 g_line="${g_line%$'\r'}"
@@ -122,7 +110,6 @@ __build__() {
                     fi
                 fi
             done < "$file"
-
             local page_tmpl_raw="${p_tmpl:-$TEMPLATEDIR}"
             if [[ -n "${WIKI_TEMPLATE_VARS[$page_tmpl_raw]:-}" ]]; then
                 page_tmpl_raw="${WIKI_TEMPLATE_VARS[$page_tmpl_raw]}"
@@ -134,18 +121,19 @@ __build__() {
                 __log "Template file missing for page $p at $page_tmpl_raw" -t error -l wiki
                 continue
             fi
-
             local pagename="$p"
             local out_path="$BUILDDIR/${p//./\/}.html"
             local current_dir="${p%.*}"
             if [[ "$current_dir" == "$p" ]]; then current_dir="."; fi
             mkdir -p "${out_path%/*}"
-
             local file_hash=$(cksum "$file" | awk '{print $1 "_" $2}')
             if [[ $force_rebuild -eq 0 && "${CACHE_HASHES[$file]:-}" == "$file_hash" && -f "$out_path" ]]; then
-                [[ -f "$cache_dir/${pagename}_pages.json" ]] && SEARCH_INDEX_PAGES+=$(cat "$cache_dir/${pagename}_pages.json")
-                [[ -f "$cache_dir/${pagename}_tables.json" ]] && SEARCH_INDEX_TABLES+=$(cat "$cache_dir/${pagename}_tables.json")
-                [[ -f "$cache_dir/${pagename}_defs.json" ]] && SEARCH_INDEX_DEFS+=$(cat "$cache_dir/${pagename}_defs.json")
+                for idx_f in "$cache_dir"/${pagename}_index_*.json; do
+                    [[ -f "$idx_f" ]] || continue
+                    local bname="${idx_f##*_index_}"
+                    bname="${bname%.json}"
+                    SEARCH_INDEX_MAP["$bname"]+=$(cat "$idx_f")
+                done
                 __log "Skipped rendering $pagename (unmodified)" -t info -l wiki
                 continue
             fi
@@ -154,51 +142,40 @@ __build__() {
             read -r -d '' RAW_LAYOUT < "$page_tmpl_raw" || true
             local -a layout_lines
             mapfile -t layout_lines <<< "$RAW_LAYOUT"
-
-            local old_pages_len=${#SEARCH_INDEX_PAGES}
-            local old_tables_len=${#SEARCH_INDEX_TABLES}
-            local old_defs_len=${#SEARCH_INDEX_DEFS}
-
+            
+            local -A old_len_map=()
+            for k in "${!SEARCH_INDEX_MAP[@]}"; do old_len_map["$k"]="${#SEARCH_INDEX_MAP[$k]}"; done
+            
             __render "$file" "$pagename" "$out_path" "$current_dir"
             
-            printf "%s" "${SEARCH_INDEX_PAGES:$old_pages_len}" > "$cache_dir/${pagename}_pages.json"
-            printf "%s" "${SEARCH_INDEX_TABLES:$old_tables_len}" > "$cache_dir/${pagename}_tables.json"
-            printf "%s" "${SEARCH_INDEX_DEFS:$old_defs_len}" > "$cache_dir/${pagename}_defs.json"
-
+            for k in "${!SEARCH_INDEX_MAP[@]}"; do
+                local old_len="${old_len_map[$k]:-0}"
+                local new_content="${SEARCH_INDEX_MAP[$k]:$old_len}"
+                if [[ -n "$new_content" ]]; then
+                    printf "%s" "$new_content" > "$cache_dir/${pagename}_index_${k}.json"
+                fi
+            done
             CACHE_HASHES["$file"]="$file_hash"
         done
     }
-
     __build_index() {
         > "$cache_file"
         for f in "${!CACHE_HASHES[@]}"; do
             echo "${CACHE_HASHES[$f]} $f" >> "$cache_file"
         done
-
         __save
-
-        SEARCH_INDEX_PAGES="${SEARCH_INDEX_PAGES%$'\n'}"
-        SEARCH_INDEX_PAGES="${SEARCH_INDEX_PAGES%,}"
-
-        SEARCH_INDEX_TABLES="${SEARCH_INDEX_TABLES%$'\n'}"
-        SEARCH_INDEX_TABLES="${SEARCH_INDEX_TABLES%,}"
-
-        SEARCH_INDEX_DEFS="${SEARCH_INDEX_DEFS%$'\n'}"
-        SEARCH_INDEX_DEFS="${SEARCH_INDEX_DEFS%,}"
-
-        cat <<EOF > "$BUILDDIR/index.json"
-{
-  "pages": [
-    $SEARCH_INDEX_PAGES
-  ],
-  "tables": [
-    $SEARCH_INDEX_TABLES
-  ],
-  "defs": [
-    $SEARCH_INDEX_DEFS
-  ]
-}
-EOF
+        
+        local json_content="{"
+        local first=1
+        for k in "${!SEARCH_INDEX_MAP[@]}"; do
+            local arr_str="${SEARCH_INDEX_MAP[$k]}"
+            arr_str="${arr_str%$'\n'}"
+            arr_str="${arr_str%,}"
+            (( first == 0 )) && json_content+=","
+            json_content+="\"$k\": [ $arr_str ]"
+            first=0
+        done
+        json_content+="}"
+        printf "%s" "$json_content" > "$BUILDDIR/index.json"
     }
-
 }

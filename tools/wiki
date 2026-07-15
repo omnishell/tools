@@ -365,8 +365,9 @@ FLAGS:
         esac
     }
 
+   
     __wiki__.build() {
-        declare -g SEARCH_INDEX_PAGES="" SEARCH_INDEX_TABLES="" SEARCH_INDEX_DEFS=""
+        declare -gA SEARCH_INDEX_MAP=() LIST_HTML_MAP=() BLOCK_TITLE_KEYS=()
         declare -p WIKIS >/dev/null 2>&1 || declare -g -a WIKIS=()
         
         local target="$1"; shift || true
@@ -394,12 +395,10 @@ FLAGS:
         local w_name="${target%%.*}"
         local p_name=""
         if [[ "$target" == *.* ]]; then p_name="${target#*.}"; fi
-        
         if [[ -z "$w_name" ]]; then
             __log "No wiki specified or registered." -t error -l wiki
             return 1
         fi
-        
         local w_config="${WIKI_VARS[$w_name]:-}"
         if [[ -z "$w_config" ]]; then
             __log "Wiki '$w_name' is not configured." -t error -l wiki

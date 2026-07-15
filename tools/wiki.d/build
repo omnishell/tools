@@ -1,6 +1,6 @@
 #! /bin/bash
 __build__() {
-    __build_init_pages() {
+    __build_init() {
         if [[ -z "${WIKI_PAGES[$w_name]:-}" ]]; then
             __log "WIKI_PAGES empty for '$w_name'. Building dynamically from '$SOURCEDIR'." -t info -l wiki
             while IFS= read -r -d '' file; do
@@ -36,6 +36,7 @@ __build__() {
             else _global_pages+=("${parts[0]}"); fi
         done
     }
+
     __build_cache() {
         mkdir -p "$cache_dir" 2>/dev/null
         local tmpl_hash=""
@@ -62,7 +63,7 @@ __build__() {
             done < "$cache_file"
         fi
     }
-    __build_menus() {
+    __build_partials() {
         __partial_menu
         __partial_sidebar
         
@@ -79,7 +80,8 @@ __build__() {
             DIR_FILES_MAP["$map_p_dir"]+="<li><a href=\"/${map_p_url}\">${disp_name}</a></li>"$'\n'
         done
     }
-    __build_compile() {
+
+    __build_main() {
         if [[ -n "$p_name" ]]; then build_targets=("$p_name")
         else build_targets=("${_pages[@]}"); fi
         for p in "${build_targets[@]}"; do
@@ -146,7 +148,7 @@ __build__() {
             local -A old_len_map=()
             for k in "${!SEARCH_INDEX_MAP[@]}"; do old_len_map["$k"]="${#SEARCH_INDEX_MAP[$k]}"; done
             
-            __render "$file" "$pagename" "$out_path" "$current_dir"
+            __render_main "$file" "$pagename" "$out_path" "$current_dir"
             
             for k in "${!SEARCH_INDEX_MAP[@]}"; do
                 local old_len="${old_len_map[$k]:-0}"
@@ -158,6 +160,7 @@ __build__() {
             CACHE_HASHES["$file"]="$file_hash"
         done
     }
+
     __build_index() {
         > "$cache_file"
         for f in "${!CACHE_HASHES[@]}"; do

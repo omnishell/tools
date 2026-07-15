@@ -4,8 +4,12 @@ _WIKI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 __wiki__() {
 
-    __load script helper --from "$_WIKI_DIR/wiki.d"
-    __load script build --from "$_WIKI_DIR/wiki.d"
+    __load script helper   --from "$_WIKI_DIR/wiki.d"
+    __load script partials --from "$_WIKI_DIR/wiki.d"
+    __load script blocks   --from "$_WIKI_DIR/wiki.d"
+    __load script parse    --from "$_WIKI_DIR/wiki.d"
+    __load script render   --from "$_WIKI_DIR/wiki.d"
+    __load script build    --from "$_WIKI_DIR/wiki.d"
     
     __fm_val() {
         local file="$1" key="$2" in_fm=0 line
@@ -433,10 +437,10 @@ FLAGS:
         local tmpl_cache_file="$cache_dir/tmpl_cache"
         local force_rebuild=$rebuild
 
-        __build_init_pages
+        __build_init
         __build_cache
-        __build_menus
-        __build_compile
+        __build_partials
+        __build_main
         __build_index
 
         return 0

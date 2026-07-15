@@ -1,0 +1,140 @@
+#! /bin/bash
+
+__partials__() {
+    __partial_menu() {
+        __log "Building Featured Menu..." -t info -l wiki
+        local -a _featured_list=()
+        if declare -p WIKI_FEATURED >/dev/null 2>&1; then
+            if [[ "$(declare -p WIKI_FEATURED)" == "declare -a"* ]]; then _featured_list=("${WIKI_FEATURED[@]}")
+            else read -ra _featured_list <<< "$WIKI_FEATURED"; fi
+        else _featured_list=("${_global_pages[@]}"); fi
+        if [ ${#_featured_list[@]} -gt 0 ]; then
+            mapfile -t _featured_list < <(
+                for p in "${_featured_list[@]}"; do
+                    echo "${PAGE_WEIGHTS[$p]:-9999}|$p"
+                done | sort -t'|' -k1,1n -k2,2 | awk -F'|' '{print $2}'
+            )
+        fi
+        local fpage
+        for fpage in "${_featured_list[@]}"; do
+            local fname="${PAGE_TITLES[$fpage]:-}"
+            if [[ -z "$fname" ]]; then
+                fname="${fpage##*.}"
+                fname="${fname^}"
+            fi
+            WIKI_FEATURED_HTML+="<a href=\"/${fpage//./\/}.html\" class=\"menu-item\">${fname}</a>"$'\n'
+        done
+    }
+
+    __partial_sidebar() {
+        __log "Building Top Menu Tree..." -t info -l wiki
+        WIKI_MENU_HTML="<ul class=\"sidebar-ul\">"$'\n'
+        local -a sorted_pages=()
+        if [ ${#_nested_pages[@]} -gt 0 ]; then
+            mapfile -t sorted_pages < <(
+                for p in "${_nested_pages[@]}"; do
+                    local dir_path="${p%.*}"
+                    echo "${dir_path}|${PAGE_WEIGHTS[$p]:-9999}|$p"
+                done | sort -t'|' -k1,1 -k2,2n -k3,3 | awk -F'|' '{print $3}'
+            )
+        fi
+        local -a current_path=()
+        local idx
+        for idx in "${!sorted_pages[@]}"; do
+            local entry="${sorted_pages[$idx]}"
+            if [[ -z "$entry" ]]; then continue; fi
+            local -a parts=()
+            local OIFS="$IFS"; IFS='.'; read -ra parts <<< "$entry"; IFS="$OIFS"
+            local page_name="${parts[${#parts[@]}-1]}"
+            local -a dir_parts=("${parts[@]:0:${#parts[@]}-1}")
+            local common_len=0
+            while [[ $common_len -lt ${#current_path[@]} && $common_len -lt ${#dir_parts[@]} && "${current_path[$common_len]}" == "${dir_parts[$common_len]}" ]]; do
+                common_len=$((common_len + 1))
+            done
+            local i
+            for (( i=${#current_path[@]}-1; i>=common_len; i-- )); do 
+                WIKI_MENU_HTML+="</ul></details></li>"$'\n'
+            done
+            for (( i=common_len; i<${#dir_parts[@]}; i++ )); do
+                local dir="${dir_parts[$i]}"
+                local css_class="sidebar-collapsible"
+                [[ $i -gt 0 ]] && css_class="sidebar-collapsible sub-dir"
+                WIKI_MENU_HTML+="<li class=\"${css_class}\"><details open><summary>${dir}/</summary><ul class=\"sidebar-ul-inner\">"$'\n'
+            done
+            local page_url
+            if [[ ${#dir_parts[@]} -gt 0 ]]; then
+                local prev_IFS="$IFS"
+                IFS='/'
+                local joined="${dir_parts[*]}"
+                IFS="$prev_IFS"
+                page_url="${joined}/${page_name}.html"
+            else
+                page_url="${page_name}.html"
+            fi
+            local disp_name="${PAGE_TITLES[$entry]:-}"
+            [[ -z "$disp_name" ]] && disp_name="$page_name"
+            WIKI_MENU_HTML+="<li class=\"sidebar-li\"><a href=\"/${page_url}\">${disp_name}</a></li>"$'\n'
+            current_path=("${dir_parts[@]}")
+        done
+        local i
+        for (( i=${#current_path[@]}-1; i>=0; i-- )); do 
+            WIKI_MENU_HTML+="</ul></details></li>"$'\n'
+        done
+        WIKI_MENU_HTML+="</ul>"$'\n'
+    }
+
+    __partial_breadcrumb() {
+        WIKI_BREADCRUMB_HTML="<breadcrumb><a href=\"/index.html\" class=\"breadcrumb-0\">Home</a>"
+        local -a b_parts=()
+        local OIFS="$IFS"; IFS='.'; read -ra b_parts <<< "$pagename"; IFS="$OIFS"
+        local cum_slug=""
+        local i
+        for ((i=0; i<${#b_parts[@]}; i++)); do
+            local part="${b_parts[$i]}"
+            if [[ -z "$cum_slug" ]]; then cum_slug="$part"; else cum_slug="${cum_slug}.${part}"; fi
+            local b_title="${PAGE_TITLES[$cum_slug]:-$part}"
+            local b_idx=$((i + 1))
+            
+            if [[ $i -eq $((${#b_parts[@]} - 1)) ]]; then
+                WIKI_BREADCRUMB_HTML+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${cum_slug//./\/}.html\" class=\"breadcrumb-current\">${b_title}</a>"
+            else
+                local dir_path="${cum_slug//./\/}"
+                
+                if [[ -f "$SOURCEDIR/$dir_path/index.md" ]]; then
+                    WIKI_BREADCRUMB_HTML+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${dir_path}/index.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
+                elif [[ -f "$SOURCEDIR/${dir_path}.md" ]]; then
+                    WIKI_BREADCRUMB_HTML+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${dir_path}.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
+                else
+                    local best_page=""
+                    local best_weight=9999999
+                    local p
+                    for p in "${_pages[@]}"; do
+                        if [[ "$p" == "${cum_slug}."* ]]; then
+                            local remainder="${p#${cum_slug}.}"
+                            if [[ "$remainder" != *.* ]]; then
+                                local w="${PAGE_WEIGHTS[$p]}"
+                                [[ -z "$w" ]] && w=9999999
+                                
+                                if (( w < best_weight )); then
+                                    best_weight=$w
+                                    best_page="$p"
+                                elif (( w == best_weight )); then
+                                    if [[ -z "$best_page" ]] || [[ "$p" < "$best_page" ]]; then
+                                        best_page="$p"
+                                    fi
+                                fi
+                            fi
+                        fi
+                    done
+                    
+                    if [[ -n "$best_page" ]]; then
+                        WIKI_BREADCRUMB_HTML+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${best_page//./\/}.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
+                    else
+                        WIKI_BREADCRUMB_HTML+="<span class=\"breadcrumb-sep\">/</span><span class=\"breadcrumb-${b_idx}\">${b_title}</span>"
+                    fi
+                fi
+            fi
+        done
+        WIKI_BREADCRUMB_HTML+="</breadcrumb>"
+    }
+}

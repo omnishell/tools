@@ -1,0 +1,407 @@
+#! /bin/bash
+
+__parse__() {
+
+
+    __parse_item() {
+        local indent="$1" ltype="$2" item_content="$3" line_prefix=""
+        while (( list_depth > 0 )) && (( indent < LIST_INDENTS[list_depth-1] )); do
+            list_depth=$((list_depth - 1))
+            line_prefix+="</li></${LIST_TYPES[list_depth]}>"
+        done
+        if (( list_depth == 0 )) || (( indent > LIST_INDENTS[list_depth-1] )); then
+            LIST_INDENTS[$list_depth]="$indent"
+            LIST_TYPES[$list_depth]="$ltype"
+            list_depth=$((list_depth + 1))
+            line_prefix+="<${ltype}><li>"
+        else
+            if [[ "${LIST_TYPES[list_depth-1]}" != "$ltype" ]]; then
+                line_prefix+="</li></${LIST_TYPES[list_depth-1]}><${ltype}><li>"
+                LIST_TYPES[$list_depth-1]="$ltype"
+            else
+                line_prefix+="</li><li>"
+            fi
+        fi
+        line="${line_prefix}${item_content}"
+    }
+    
+    __parse_ul() { __parse_item "$1" "ul" "$2"; }
+    __parse_ol() { __parse_item "$1" "ol" "$2"; }
+    
+    __parse_list() {
+        if (( list_depth > 0 )); then
+            while (( list_depth > 0 )); do
+                list_depth=$((list_depth - 1))
+                content+="</li></${LIST_TYPES[list_depth]}>"$'\n'
+            done
+            LIST_INDENTS=()
+            LIST_TYPES=()
+        fi
+    }
+
+    __parse_inline() {
+        if [[ "$line" != *"\`"* && "$line" != *"*"* && "$line" != *"_"* && "$line" != *"+"* && "$line" != *"{"* && "$line" != *"["* && "$line" != *"<"* ]]; then return; fi
+        local -a masked_codes=()
+        local m_idx=0
+        if [[ "$line" == *"\`"* ]]; then
+            local code_re='`([^`]+)`'
+            while [[ "$line" =~ $code_re ]]; do
+                local full="${BASH_REMATCH[0]}" code="${BASH_REMATCH[1]}"
+                code="${code//&/$_amp}"; code="${code//</$_lt}"; code="${code//>/$_gt}"
+                local old_line="$line"
+                masked_codes[$m_idx]="<inline>${code}</inline>"
+                line="${line/"$full"/%%MASKED_${m_idx}%%}"
+                ((m_idx++))
+                if [[ "$line" == "$old_line" ]]; then break; fi
+            done
+        fi
+        if [[ "$line" == *"<pre"* && "$line" == *"</pre>"* ]]; then
+            local temp_line="$line"
+            while [[ "$temp_line" == *"<pre"* && "$temp_line" == *"</pre>"* ]]; do
+                local before_pre="${temp_line%%<pre*}"
+                local rest="${temp_line#*$before_pre}"
+                local full_pre="${rest%%</pre>*}</pre>"
+                local old_line="$temp_line"
+                masked_codes[$m_idx]="$full_pre"
+                temp_line="${temp_line/"$full_pre"/%%MASKED_${m_idx}%%}"
+                ((m_idx++))
+                if [[ "$temp_line" == "$old_line" ]]; then break; fi
+            done
+            line="$temp_line"
+        fi
+        if [[ "$line" == *"**"* || "$line" == *"__"* ]]; then
+            while [[ "$line" == *"**"*"**"* ]]; do
+                local old_line="$line"
+                line="${line/\*\*/<strong>}"; line="${line/\*\*/<\/strong>}"
+                if [[ "$line" == "$old_line" ]]; then break; fi
+            done
+            while [[ "$line" == *"__"*"__"* ]]; do
+                local old_line="$line"
+                line="${line/__/<strong>}"; line="${line/__/<\/strong>}"
+                if [[ "$line" == "$old_line" ]]; then break; fi
+            done
+        fi
+        if [[ "$line" == *"++"* ]]; then
+            while [[ "$line" == *"++"*"++"* ]]; do
+                local old_line="$line"
+                line="${line/\+\+/<ins>}"; line="${line/\+\+/<\/ins>}"
+                if [[ "$line" == "$old_line" ]]; then break; fi
+            done
+        fi
+        if [[ "$line" == *"_"*"_"* ]]; then
+            local em_re='(^|[[:space:][:punct:]])_([a-zA-Z0-9][^_]+)_([[:space:][:punct:]]|$)'
+            while [[ "$line" =~ $em_re ]]; do
+                local full="${BASH_REMATCH[0]}" pre="${BASH_REMATCH[1]}" t_content="${BASH_REMATCH[2]}" post="${BASH_REMATCH[3]}"
+                if [[ "$t_content" == *"/"* || "$t_content" == *"="* ]]; then break; fi
+                local old_line="$line"
+                line="${line/"$full"/${pre}<em>${t_content}</em>${post}}"
+                if [[ "$line" == "$old_line" ]]; then break; fi
+            done
+        fi
+        if [[ "$line" == *"{{"*":"*"}}"* ]]; then
+            local topic_re='\{\{[[:space:]]*([a-zA-Z0-9_-]+):([^:}]+)(:([^}]+))?[[:space:]]*\}\}'
+            while [[ "$line" =~ $topic_re ]]; do
+                local full="${BASH_REMATCH[0]}"
+                local topic="${BASH_REMATCH[1]}"
+                local raw_ref="${BASH_REMATCH[2]}"
+                local label="${BASH_REMATCH[4]}"
+                raw_ref="${raw_ref#"${raw_ref%%[![:space:]]*}"}"
+                raw_ref="${raw_ref%"${raw_ref##*[![:space:]]}"}"
+                if [[ -z "$label" ]]; then
+                    label="$raw_ref"
+                else
+                    label="${label#"${label%%[![:space:]]*}"}"
+                    label="${label%"${label##*[![:space:]]}"}"
+                fi
+                local ref_key=""
+                if type __slugify >/dev/null 2>&1; then
+                    ref_key="$(__slugify "$raw_ref")"
+                else
+                    ref_key="${raw_ref//[^a-zA-Z0-9_.-]/}"
+                fi
+                local key="${topic}::${ref_key}"
+                local target="${WIKI_REFS[$key]:-}"
+                if [[ -z "$target" && -n "$w_name" ]]; then
+                    target="${WIKI_REFS[${w_name}::${ENV:-}::${key}]:-}"
+                fi
+                if [[ -z "$target" ]]; then
+                    local clean_key="${key//[^a-zA-Z0-9_.:-]/}"
+                    local k
+                    for k in "${!WIKI_REFS[@]}"; do
+                        local clean_k="${k//[^a-zA-Z0-9_.:-]/}"
+                        if [[ "$clean_k" == "$clean_key" || "$clean_k" == *"::${clean_key}" ]]; then
+                            target="${WIKI_REFS[$k]}"
+                            break
+                        fi
+                    done
+                fi
+                local old_line="$line"
+                if [[ -z "$target" ]]; then
+                    line="${line/"$full"/<span class=\"wiki-ref-err\">${label}</span>}"
+                else
+                    local href=""
+                    if [[ "$target" == http://* || "$target" == https://* ]]; then href="$target"
+                    else
+                        local internal_path="${target%:*}" marker="${target##*:}"
+                        [[ "$target" != *":"* ]] && marker=""
+                        internal_path="${internal_path//./\/}"; href="/${internal_path}.html"
+                        [[ -n "$marker" ]] && href="${href}#${marker}"
+                    fi
+                    line="${line/"$full"/<a class=\"wiki-topic-${topic}\" href=\"${href}\">${label}</a>}"
+                fi
+                if [[ "$line" == "$old_line" ]]; then break; fi
+            done
+        fi
+        if [[ "$line" == *"{{#"* || "$line" == *"{{="* ]]; then
+            local mark_re='\{\{\#([a-zA-Z0-9_.-]+)\}\}'
+            local anchor_re='\{\{\=([a-zA-Z0-9_.-]+)\}\}'
+            while [[ "$line" =~ $mark_re ]]; do
+                local full="${BASH_REMATCH[0]}"
+                local old_line="$line"
+                line="${line/"$full"/<span id=\"${BASH_REMATCH[1]}\" class=\"wiki-mark\"></span>}"
+                if [[ "$line" == "$old_line" ]]; then break; fi
+            done
+            while [[ "$line" =~ $anchor_re ]]; do
+                local full="${BASH_REMATCH[0]}"
+                local old_line="$line"
+                line="${line/"$full"/<a href=\"#${BASH_REMATCH[1]}\">${BASH_REMATCH[1]}</a>}"
+                if [[ "$line" == "$old_line" ]]; then break; fi
+            done
+        fi
+        if [[ "$line" == *"["* && "$line" == *"]("* ]]; then
+            local link_re='\[([^]]+)\]\(([^)]+)\)'
+            while [[ "$line" =~ $link_re ]]; do
+                local full="${BASH_REMATCH[0]}" l_text="${BASH_REMATCH[1]}" l_href="${BASH_REMATCH[2]}"
+                if [[ "$l_href" != http://* && "$l_href" != https://* ]]; then
+                    if [[ "$l_href" =~ ^(.*)\.(md|markdown|MD|MARKDOWN)([ \t#].*)?$ ]]; then
+                        l_href="${BASH_REMATCH[1]}.html${BASH_REMATCH[3]}"
+                    fi
+                fi
+                local old_line="$line"
+                line="${line/"$full"/<a href=\"${l_href}\">${l_text}</a>}"
+                if [[ "$line" == "$old_line" ]]; then break; fi
+            done
+        fi
+        for (( i=0; i<m_idx; i++ )); do
+            line="${line//%%MASKED_${i}%%/${masked_codes[$i]}}"
+        done
+    }
+
+    __parse_multiline() {
+        local text="$1"
+        local out=""
+        local in_inner=0
+        local in_html_pre=0
+        local code_lang=""
+        local list_depth=0
+        local -a LIST_INDENTS=() LIST_TYPES=()
+        while IFS= read -r l || [[ -n "$l" ]]; do
+            if (( in_inner == 0 )); then
+                if [[ "$l" =~ ^[[:space:]]*\`\`\`([a-zA-Z0-9_+-]*)[[:space:]]*$ ]]; then
+                    local content=""
+                    __parse_list
+                    out+="$content"
+                    in_inner=1
+                    code_lang="${BASH_REMATCH[1]}"
+                    out+="${out:+$'\n'}<pre><code class=\"language-${code_lang}\">"$'\n'
+                else
+                    if (( in_html_pre == 1 )); then
+                        if [[ "$l" == *"</pre>"* ]]; then in_html_pre=0; fi
+                        out+="${out:+$'\n'}$l"
+                        continue
+                    fi
+                    if [[ "$l" == *"<pre"* && "$l" != *"</pre>"* ]]; then
+                        in_html_pre=1
+                        out+="${out:+$'\n'}$l"
+                        continue
+                    fi
+                    if [[ "$l" =~ ^([[:space:]]*)([-*+]|[0-9]+\.)[[:space:]]+(.*)$ ]]; then
+                        local indent="${#BASH_REMATCH[1]}" marker="${BASH_REMATCH[2]}" item_content="${BASH_REMATCH[3]}"
+                        local temp_line="$line"
+                        if [[ "$marker" =~ ^[0-9] ]]; then __parse_ol "$indent" "$item_content"; else __parse_ul "$indent" "$item_content"; fi
+                        l="$line"
+                        line="$temp_line"
+                    else
+                        if (( list_depth > 0 )); then
+                            if [[ -z "${l//[[:space:]]/}" ]]; then
+                                out+="${out:+$'\n'}<br><br>"
+                                continue
+                            fi
+                            if [[ ! "$l" =~ ^[[:space:]]+ ]]; then
+                                local content=""
+                                __parse_list
+                                out+="$content"
+                            fi
+                        fi
+                    fi
+                    local temp_line="$line"
+                    line="$l"
+                    __parse_inline
+                    l="$line"
+                    line="$temp_line"
+                    out+="${out:+$'\n'}$l"
+                fi
+            else
+                if [[ "${l//[[:space:]]/}" == "\`\`\`" ]]; then
+                    in_inner=0
+                    out+="</code></pre>"
+                else
+                    l="${l//&/$_amp}"; l="${l//</$_lt}"; l="${l//>/$_gt}"
+                    out+="$l"$'\n'
+                fi
+            fi
+        done <<< "$text"
+        local content=""
+        __parse_list
+        out+="${content}"
+        echo -n "$out"
+    }
+
+    __parse_main() {    
+        for line in "${lines[@]}"; do
+            set_ignore_this_turn=0
+            line="${line%$'\r'}"
+            if (( in_frontmatter == 1 )); then
+                if [[ "$line" =~ ^---\s*$ ]]; then in_frontmatter=2; continue; fi
+                if [[ "$line" =~ ^([[:space:]]*)([a-zA-Z0-9_.-]+):(.*)$ ]]; then
+                    local indent="${#BASH_REMATCH[1]}" key="${BASH_REMATCH[2]}" val="${BASH_REMATCH[3]}"
+                    val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
+                    val="${val#\"}"; val="${val%\"}"; val="${val#\'}"; val="${val%\'}"
+                    local lvl=$((indent / 2))
+                    KEYS_STACK[lvl]="$key"
+                    local flat_key="page" i
+                    for ((i=0; i<=lvl; i++)); do flat_key+="."${KEYS_STACK[i]}; done
+                    if [[ -n "$val" ]]; then PAGE_VARS["$flat_key"]="$val"; fi
+                    if [[ "$key" == "title" && $lvl == 0 ]]; then title="$val"; fi
+                fi
+                continue
+            elif (( in_frontmatter == 0 )); then
+                if [[ "$line" =~ ^---\s*$ ]]; then in_frontmatter=1; continue; fi
+            fi
+            
+            if (( in_code_block == 1 )); then
+                if [[ "${line//[[:space:]]/}" == "\`\`\`" ]]; then
+                    content+="</code></pre>"$'\n'; in_code_block=0; ignore_next_empty=1
+                else
+                    line="${line//&/$_amp}"; line="${line//</$_lt}"; line="${line//>/$_gt}"
+                    content+="${line}"$'\n'
+                fi
+                continue
+            fi
+            
+            if [[ -n "$in_custom_block" ]]; then
+                if [[ "$line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && [[ "${BASH_REMATCH[1]}" == "$custom_block_indent" ]]; then
+                    if [[ "$in_custom_block" == "table" ]]; then __block_table
+                    elif [[ "$in_custom_block" == "diagram" ]]; then __block_diagram
+                    elif [[ "$in_custom_block" == "hide" ]]; then __block_hide
+                    elif [[ "$in_custom_block" == "globals" || "$in_custom_block" == "comment" ]]; then :
+                    elif [[ -n "${WIKI_BLOCKS[$in_custom_block]:-}" ]]; then content+="</div>"$'\n'
+                    elif [[ "$in_custom_block" == "blockquote" ]]; then content+="</blockquote>"$'\n'
+                    else 
+                        if declare -F "__block_${in_custom_block}" >/dev/null; then
+                            "__block_${in_custom_block}" "$in_custom_block" custom_block_buffer
+                        else
+                            __block_core "$in_custom_block" custom_block_buffer
+                        fi
+                    fi
+                    in_custom_block=""; custom_block_indent=""; ignore_next_empty=1; continue
+                else
+                    if [[ "$in_custom_block" == "table" ]]; then table_buffer+=("$line"); continue; fi
+                    if [[ "$in_custom_block" == "diagram" ]]; then diagram_buffer+=("$line"); continue; fi
+                    if [[ "$in_custom_block" == "hide" ]]; then hide_buffer+=("$line"); continue; fi
+                    if [[ "$in_custom_block" == "globals" || "$in_custom_block" == "comment" ]]; then continue; fi
+                    if [[ -n "${WIKI_BLOCKS[$in_custom_block]:-}" ]]; then content+="$line"$'\n'; continue; fi
+                    
+                    custom_block_buffer+=("$line"); continue
+                fi
+            else
+                if [[ "$line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
+                    local curr_indent="${BASH_REMATCH[1]}"
+                    local bname="${BASH_REMATCH[2]}"
+                    if [[ "$bname" == "table" ]]; then 
+                        in_custom_block="table"; custom_block_indent="$curr_indent"; table_buffer=(); continue
+                    elif [[ "$bname" == "diagram" ]]; then 
+                        in_custom_block="diagram"; custom_block_indent="$curr_indent"; diagram_buffer=(); continue
+                    elif [[ "$bname" == "hide" ]]; then 
+                        in_custom_block="hide"; custom_block_indent="$curr_indent"; hide_buffer=(); continue
+                    elif [[ "$bname" == "globals" || "$bname" == "comment" ]]; then 
+                        in_custom_block="$bname"; custom_block_indent="$curr_indent"; continue
+                    elif [[ -n "${WIKI_BLOCKS[$bname]:-}" ]]; then
+                        in_custom_block="$bname"; custom_block_indent="$curr_indent"
+                        content+="<div class=\"${WIKI_BLOCKS[$bname]}\">"$'\n'
+                        continue
+                    elif [[ "$bname" == "quote" ]]; then
+                        in_custom_block="blockquote"; custom_block_indent="$curr_indent"
+                        content+="<${in_custom_block}>"$'\n'
+                        continue
+                    else
+                        in_custom_block="$bname"; custom_block_indent="$curr_indent"; custom_block_buffer=(); continue
+                    fi
+                fi
+                
+                if [[ "$line" =~ ^[[:space:]]*\`\`\`([a-zA-Z0-9_+-]*)[[:space:]]*$ ]]; then
+                    (( list_depth > 0 )) && __parse_list
+                    content="${content%<br><br>$'\n'}"
+                    in_code_block=1
+                    local lang="${BASH_REMATCH[1]}"
+                    if [[ -n "$lang" ]]; then content+="<pre><code class=\"language-${lang}\">"$'\n'
+                    else content+="<pre><code>"$'\n'; fi
+                    continue
+                fi
+                
+                if (( in_html_pre == 1 )); then
+                    if [[ "$line" == *"</pre>"* ]]; then in_html_pre=0; fi
+                    content+="${line}"$'\n'
+                    continue
+                fi
+                if [[ "$line" == *"<pre"* && "$line" != *"</pre>"* ]]; then
+                    in_html_pre=1
+                    content+="${line}"$'\n'
+                    continue
+                fi
+            fi
+            
+            if [[ "$line" == *"{{"* ]]; then
+                if [[ "$line" =~ ^\s*\{\{\ *toc\ *\}\}\s*$ ]]; then line="{{TOC_PLACEHOLDER}}"; set_ignore_this_turn=1; fi
+                if [[ "$line" =~ ^\s*\{\{\ *files\ *\}\}\s*$ ]]; then line="{{FILES_PLACEHOLDER}}"; set_ignore_this_turn=1; fi
+            fi
+            
+            if [[ "$line" == "#"* ]]; then
+                if [[ "$line" =~ $h_regex ]]; then
+                    (( list_depth > 0 )) && __parse_list
+                    local h_level="${#BASH_REMATCH[1]}"
+                    local h_text="${BASH_REMATCH[2]}"
+                    local slug="${h_text,,}"
+                    slug="${slug// /_}"; slug="${slug//[^a-z0-9_-]/}"
+                    line="<h${h_level} id=\"${slug}\">${h_text}</h${h_level}>"
+                    TOC_HTML+="<li class=\"toc-h${h_level}\"><a href=\"#${slug}\">${h_text}</a></li>"$'\n'
+                    set_ignore_this_turn=1
+                fi
+            fi
+            
+            if [[ "$line" =~ ^([[:space:]]*)([-*+]|[0-9]+\.)[[:space:]]+(.*)$ ]]; then
+                local indent="${#BASH_REMATCH[1]}" marker="${BASH_REMATCH[2]}" item_content="${BASH_REMATCH[3]}"
+                if [[ "$marker" =~ ^[0-9] ]]; then __parse_ol "$indent" "$item_content"; else __parse_ul "$indent" "$item_content"; fi
+            else
+                if (( list_depth > 0 )); then
+                    if [[ -z "${line//[[:space:]]/}" ]]; then
+                        if [[ $ignore_next_empty -eq 1 ]]; then continue; fi
+                        if [[ $was_empty -eq 0 ]]; then content+="<br><br>"$'\n'; was_empty=1; fi
+                        continue
+                    fi
+                    if [[ ! "$line" =~ ^[[:space:]]+ ]]; then __parse_list; fi
+                fi
+            fi
+            
+            __parse_inline
+            if [[ -z "${line//[[:space:]]/}" ]]; then
+                if [[ $ignore_next_empty -eq 1 ]]; then :
+                elif [[ $was_empty -eq 0 ]]; then content+="<br><br>"$'\n'; was_empty=1; fi
+            else
+                content+="${line}"$'\n'; was_empty=0
+                if [[ $set_ignore_this_turn -eq 1 ]]; then ignore_next_empty=1; else ignore_next_empty=0; fi
+            fi
+        done
+        __parse_list
+    }
+}

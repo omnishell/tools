@@ -159,6 +159,37 @@ __build__() {
             done
             CACHE_HASHES["$file"]="$file_hash"
         done
+
+        local search_js="const SEARCH_CONFIG = ["
+        local sf=1
+        for k in "${!SEARCH_INDEX_MAP[@]}"; do
+            (( sf == 0 )) && search_js+=","
+            local fallback="${k^}"
+            local tkey="${BLOCK_TITLE_KEYS[$k]:-$k}"
+            [[ "$k" == "page" ]] && tkey="pagename"
+            [[ "$k" == "table" ]] && tkey="caption"
+            search_js+=" { id: '$k', others: ['${k}s'], titleKey: '$tkey', fallback: '$fallback' }"
+            sf=0
+        done
+        search_js+=" ];"
+
+        for p in "${build_targets[@]}"; do
+            local out_path="$BUILDDIR/${p//./\/}.html"
+            if [[ -f "$out_path" ]]; then
+                local html_content
+                html_content="$(<"$out_path")"
+                if [[ "$html_content" == *"%%WIKI_SEARCH_CONFIG%%"* ]]; then
+                    html_content="${html_content//%%WIKI_SEARCH_CONFIG%%/$search_js}"
+                    printf "%s" "$html_content" > "$out_path"
+                elif [[ "$html_content" == *"const SEARCH_CONFIG = ["* ]]; then
+                    local pre="${html_content%%const SEARCH_CONFIG = \[*}"
+                    local post="${html_content#*const SEARCH_CONFIG = \[}"
+                    post="${post#*\];}"
+                    html_content="${pre}${search_js}${post}"
+                    printf "%s" "$html_content" > "$out_path"
+                fi
+            fi
+        done
     }
 
     __build_index() {

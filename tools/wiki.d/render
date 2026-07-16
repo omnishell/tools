@@ -141,24 +141,11 @@ __render__() {
         done
         
         rendered="$PAGE_LAYOUT"
-        local search_tags=("{{ body }}" "{{ pagename }}" "{{pagename}}" "{{ wiki.menu }}" "{{wiki.menu}}" "{{ menu }}" "{{menu}}" "{{ wiki.featured }}" "{{wiki.featured}}" "{{ featured }}" "{{featured}}" "{{ year }}" "{{ now }}" "{{ wiki.search }}" "{{wiki.search}}" "{{ wiki.breadcrumb }}" "{{wiki.breadcrumb}}")
+        local search_tags=("{{ body }}" "{{ pagename }}" "{{pagename}}" "{{ wiki.menu }}" "{{wiki.menu}}" "{{ menu }}" "{{menu}}" "{{ wiki.featured }}" "{{wiki.featured}}" "{{ year }}" "{{ now }}" "{{ wiki.search }}" "{{wiki.search}}" "{{ wiki.breadcrumb }}" "{{wiki.breadcrumb}}")
         
         local year now t_val=""
         printf -v year "%(%Y)T" -1
         printf -v now "%(%Y/%m/%d at %H:%M)T" -1
-        
-        local search_js="const SEARCH_CONFIG = ["
-        local sf=1
-        for k in "${!SEARCH_INDEX_MAP[@]}"; do
-            (( sf == 0 )) && search_js+=","
-            local fallback="${k^}"
-            local tkey="${BLOCK_TITLE_KEYS[$k]:-$k}"
-            [[ "$k" == "page" ]] && tkey="pagename"
-            [[ "$k" == "table" ]] && tkey="caption"
-            search_js+=" { id: '$k', others: ['${k}s'], titleKey: '$tkey', fallback: '$fallback' }"
-            sf=0
-        done
-        search_js+=" ];"
         
         local WIKI_BREADCRUMB_HTML=""
         __partial_breadcrumb
@@ -171,7 +158,7 @@ __render__() {
                 "{{ wiki.featured }}"|"{{wiki.featured}}"|"{{ featured }}"|"{{featured}}") t_val="$WIKI_FEATURED_HTML" ;;
                 "{{ year }}") t_val="$year" ;;
                 "{{ now }}") t_val="$now" ;;
-                "{{ wiki.search }}"|"{{wiki.search}}") t_val="$search_js" ;;
+                "{{ wiki.search }}"|"{{wiki.search}}") t_val="%%WIKI_SEARCH_CONFIG%%" ;;
                 "{{ wiki.breadcrumb }}"|"{{wiki.breadcrumb}}") t_val="$WIKI_BREADCRUMB_HTML" ;;
             esac
             rendered="${rendered//"$search"/$t_val}"
@@ -191,10 +178,9 @@ __render__() {
         mapfile -t lines < "$file"
         __parse_main
         __render_listings
-        __render_layout
         __search_index
+        __render_layout
         printf "%s" "$rendered" > "$out_path"
         __log "Rendered -> $out_path" -t success -l wiki
-    }
-
+    } 
 }

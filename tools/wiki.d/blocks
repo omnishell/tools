@@ -870,4 +870,281 @@ __blocks__() {
         html+="</details>"$'\n'
         content+="${html}"
     }
+
+    __block_buttons() {
+        local bname="$1"
+        local -n btn_buffer_ref="$2"
+        if [[ ${#btn_buffer_ref[@]} -eq 0 ]]; then return; fi
+        local b_id="rnd-$RANDOM"
+        local -a btns=()
+        local current_key="" current_val="" b_line
+        for b_line in "${btn_buffer_ref[@]}"; do
+            if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
+                if [[ -n "$current_key" ]]; then
+                    if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
+                    elif [[ "$current_key" == "button" ]]; then btns+=("$current_val"); fi
+                fi
+                current_key="${BASH_REMATCH[1]}"
+                current_val="${BASH_REMATCH[2]}"
+                current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                current_val="${current_val%"${current_val##*[![:space:]]}"}"
+            else
+                if [[ -n "$current_key" ]]; then
+                    current_val+=$'\n'"$b_line"
+                fi
+            fi
+        done
+        if [[ -n "$current_key" ]]; then
+            if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
+            elif [[ "$current_key" == "button" ]]; then btns+=("$current_val"); fi
+        fi
+
+        local html="<buttons id=\"block-card-buttons-${b_id}\" class=\"block-card-buttons\">"$'\n'
+        local i=1 btn temp_text temp_url js_click
+        for btn in "${btns[@]}"; do
+            temp_text=""
+            temp_url=""
+            
+            if [[ "$btn" =~ text=\"([^\"]+)\" ]]; then temp_text="${BASH_REMATCH[1]}"
+            elif [[ "$btn" =~ text=\'([^\']+)\' ]]; then temp_text="${BASH_REMATCH[1]}"
+            elif [[ "$btn" =~ text=([^,]+) ]]; then temp_text="${BASH_REMATCH[1]}"; fi
+            
+            if [[ "$btn" =~ url=\"([^\"]+)\" ]]; then temp_url="${BASH_REMATCH[1]}"
+            elif [[ "$btn" =~ url=\'([^\']+)\' ]]; then temp_url="${BASH_REMATCH[1]}"
+            elif [[ "$btn" =~ url=([^,]+) ]]; then temp_url="${BASH_REMATCH[1]}"; fi
+            
+            if [[ -z "$temp_url" ]]; then
+                if [[ "$btn" =~ path=\"([^\"]+)\" ]]; then temp_url="${BASH_REMATCH[1]}"
+                elif [[ "$btn" =~ path=\'([^\']+)\' ]]; then temp_url="${BASH_REMATCH[1]}"
+                elif [[ "$btn" =~ path=([^,]+) ]]; then temp_url="${BASH_REMATCH[1]}"; fi
+                
+                if [[ -n "$temp_url" ]]; then
+                    [[ "$temp_url" != /* ]] && temp_url="/${temp_url}"
+                    if [[ "$temp_url" == *.md ]]; then
+                        temp_url="${temp_url%.md}.html"
+                    elif [[ "$temp_url" != *.* ]]; then
+                        temp_url="${temp_url}.html"
+                    fi
+                fi
+            fi
+            
+            if [[ "$temp_url" == http://* || "$temp_url" == https://* ]]; then
+                js_click="window.open('${temp_url}', '_blank');"
+            else
+                js_click="window.location.href='${temp_url}';"
+            fi
+            
+            html+="    <button id=\"block-card-button-${i}-${b_id}\" class=\"block-card-button-${i}\" href=\"${temp_url}\" onclick=\"${js_click}\">${temp_text}</button>"$'\n'
+            ((i++))
+        done
+        html+="</buttons>"$'\n'
+        content+="${html}"
+    }
+
+    __block_card() {
+        local bname="$1"
+        local -n card_buffer_ref="$2"
+        if [[ ${#card_buffer_ref[@]} -eq 0 ]]; then return; fi
+        local b_id="rnd-$RANDOM"
+        local c_cover="" c_text=""
+        local -a btns=()
+        local current_key="" current_val="" b_line
+        for b_line in "${card_buffer_ref[@]}"; do
+            if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
+                if [[ -n "$current_key" ]]; then
+                    if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
+                    elif [[ "$current_key" == "cover" ]]; then c_cover="$current_val"
+                    elif [[ "$current_key" == "text" ]]; then c_text="$current_val"
+                    elif [[ "$current_key" == "button" ]]; then btns+=("$current_val"); fi
+                fi
+                current_key="${BASH_REMATCH[1]}"
+                current_val="${BASH_REMATCH[2]}"
+                current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                current_val="${current_val%"${current_val##*[![:space:]]}"}"
+            else
+                if [[ -n "$current_key" ]]; then
+                    current_val+=$'\n'"$b_line"
+                fi
+            fi
+        done
+        if [[ -n "$current_key" ]]; then
+            if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
+            elif [[ "$current_key" == "cover" ]]; then c_cover="$current_val"
+            elif [[ "$current_key" == "text" ]]; then c_text="$current_val"
+            elif [[ "$current_key" == "button" ]]; then btns+=("$current_val"); fi
+        fi
+
+        local html="<card id=\"block-card-${b_id}\" class=\"block-card\">"$'\n'
+        if [[ -n "$c_cover" ]]; then
+            local cover_src="$c_cover"
+            if [[ "$cover_src" != http://* && "$cover_src" != https://* && "$cover_src" != /* ]]; then
+                cover_src="/_static/${cover_src}"
+            fi
+            html+="    <cover id=\"block-card-cover-${b_id}\" class=\"block-card-cover\">"$'\n'
+            html+="        <img id=\"block-card-cover-img-${b_id}\" class=\"block-card-cover-img\" src=\"${cover_src}\"></img>"$'\n'
+            html+="    </cover>"$'\n'
+        fi
+        if [[ -n "$c_text" ]]; then
+            html+="    <text id=\"block-card-text-${b_id}\" class=\"block-card-text\">${c_text}</text>"$'\n'
+        fi
+
+        if [[ ${#btns[@]} -gt 0 ]]; then
+            content+="${html}"
+            local -a fake_btn_buffer=(":: __id__: ${b_id}")
+            local btn
+            for btn in "${btns[@]}"; do
+                fake_btn_buffer+=(":: button: ${btn}")
+            done
+            __block_buttons "buttons" fake_btn_buffer
+            content+="</card>"$'\n'
+        else
+            html+="</card>"$'\n'
+            content+="${html}"
+        fi
+    }
+
+    __block_text() {
+        local bname="$1"
+        local -n text_buffer_ref="$2"
+        if [[ ${#text_buffer_ref[@]} -eq 0 ]]; then return; fi
+        local b_id="rnd-$RANDOM"
+        local t_text=""
+        local current_key="" current_val="" b_line
+        for b_line in "${text_buffer_ref[@]}"; do
+            if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
+                if [[ -n "$current_key" ]]; then
+                    if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
+                    elif [[ "$current_key" == "text" ]]; then t_text="$current_val"; fi
+                fi
+                current_key="${BASH_REMATCH[1]}"
+                current_val="${BASH_REMATCH[2]}"
+                current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                current_val="${current_val%"${current_val##*[![:space:]]}"}"
+            else
+                if [[ -n "$current_key" ]]; then
+                    current_val+=$'\n'"$b_line"
+                fi
+            fi
+        done
+        if [[ -n "$current_key" ]]; then
+            if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
+            elif [[ "$current_key" == "text" ]]; then t_text="$current_val"; fi
+        fi
+        
+        local html="<text-block id=\"block-text-${b_id}\" class=\"block-text\">"$'\n'
+        html+="    ${t_text}"$'\n'
+        html+="</text-block>"$'\n'
+        content+="${html}"
+    }
+
+    __block_row() {
+        local bname="$1"
+        local -n row_buffer_ref="$2"
+        if [[ ${#row_buffer_ref[@]} -eq 0 ]]; then return; fi
+        local r_id="rnd-$RANDOM"
+        local -a items=()
+        local -A child_html=()
+        local in_child="" child_name=""
+        local -a child_buffer=()
+        local current_key="" current_val="" b_line
+        
+        for b_line in "${row_buffer_ref[@]}"; do
+            if [[ -n "$in_child" ]]; then
+                if [[ "$b_line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]]; then
+                    local c_id="" c_line
+                    for c_line in "${child_buffer[@]}"; do
+                        if [[ "$c_line" =~ ^[[:space:]]*::[[:space:]]*__id__[[:space:]]*:[[:space:]]*(.*)$ ]]; then
+                            c_id="${BASH_REMATCH[1]}"
+                            c_id="${c_id#"${c_id%%[![:space:]]*}"}"; c_id="${c_id%"${c_id##*[![:space:]]}"}"
+                            break
+                        fi
+                    done
+                    
+                    if [[ -n "$current_key" ]]; then
+                        current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                        current_val="${current_val%"${current_val##*[![:space:]]}"}"
+                        if [[ "$current_key" == "__id__" ]]; then r_id="$current_val"
+                        elif [[ "$current_key" == "item" ]]; then items+=("${current_val#*id=}"); fi
+                        current_key=""
+                    fi
+
+                    local old_content="$content"
+                    content=""
+                    if declare -F "__block_${child_name}" >/dev/null; then
+                        "__block_${child_name}" "$child_name" child_buffer
+                    else
+                        __block_core "$child_name" child_buffer
+                    fi
+                    
+                    if [[ -n "$c_id" ]]; then
+                        child_html["$c_id"]="$content"
+                    fi
+                    content="$old_content"
+                    in_child=""
+                else
+                    child_buffer+=("$b_line")
+                fi
+                continue
+            fi
+            
+            if [[ "$b_line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
+                in_child="1"
+                child_name="${BASH_REMATCH[2]}"
+                child_buffer=()
+                
+                if [[ -n "$current_key" ]]; then
+                    current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                    current_val="${current_val%"${current_val##*[![:space:]]}"}"
+                    if [[ "$current_key" == "__id__" ]]; then r_id="$current_val"
+                    elif [[ "$current_key" == "item" ]]; then items+=("${current_val#*id=}"); fi
+                    current_key=""
+                fi
+                continue
+            fi
+
+            if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
+                if [[ -n "$current_key" ]]; then
+                    current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                    current_val="${current_val%"${current_val##*[![:space:]]}"}"
+                    if [[ "$current_key" == "__id__" ]]; then r_id="$current_val"
+                    elif [[ "$current_key" == "item" ]]; then items+=("${current_val#*id=}"); fi
+                fi
+                current_key="${BASH_REMATCH[1]}"
+                current_val="${BASH_REMATCH[2]}"
+            else
+                if [[ -n "$current_key" ]]; then
+                    current_val+=$'\n'"$b_line"
+                fi
+            fi
+        done
+        
+        if [[ -n "$current_key" ]]; then
+            current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+            current_val="${current_val%"${current_val##*[![:space:]]}"}"
+            if [[ "$current_key" == "__id__" ]]; then r_id="$current_val"
+            elif [[ "$current_key" == "item" ]]; then items+=("${current_val#*id=}"); fi
+        fi
+
+        local html="<row id=\"block-row-${r_id}\" class=\"block-row\">"$'\n'
+        html+="    <items id=\"block-row-items-${r_id}\" class=\"block-row-items\">"$'\n'
+        local i=1 it clean_it
+        for it in "${items[@]}"; do
+            clean_it="${it//\"/}"
+            clean_it="${clean_it//\'/}"
+            clean_it="${clean_it%%,*}"
+            clean_it="${clean_it#"${clean_it%%[![:space:]]*}"}"
+            clean_it="${clean_it%"${clean_it##*[![:space:]]}"}"
+            
+            html+="        <item id=\"block-row-item-${i}-${r_id}\" class=\"block-row-item-${i}\">"$'\n'
+            if [[ -n "${child_html[$clean_it]:-}" ]]; then
+                html+="${child_html[$clean_it]}"
+            fi
+            html+="        </item>"$'\n'
+            ((i++))
+        done
+        html+="    </items>"$'\n'
+        html+="</row>"$'\n'
+        content+="${html}"
+    }
+
 }

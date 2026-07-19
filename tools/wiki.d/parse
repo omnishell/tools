@@ -1,8 +1,6 @@
 #! /bin/bash
 
 __parse__() {
-
-
     __parse_item() {
         local indent="$1" ltype="$2" item_content="$3" line_prefix=""
         while (( list_depth > 0 )) && (( indent < LIST_INDENTS[list_depth-1] )); do
@@ -39,10 +37,7 @@ __parse__() {
         fi
     }
 
-    __parse_inline() {
-        if [[ "$line" != *"\`"* && "$line" != *"*"* && "$line" != *"_"* && "$line" != *"+"* && "$line" != *"{"* && "$line" != *"["* && "$line" != *"<"* ]]; then return; fi
-        local -a masked_codes=()
-        local m_idx=0
+    __parse_inline_code() {
         if [[ "$line" == *"\`"* ]]; then
             local code_re='`([^`]+)`'
             while [[ "$line" =~ $code_re ]]; do
@@ -69,6 +64,9 @@ __parse__() {
             done
             line="$temp_line"
         fi
+    }
+
+    __parse_inline_strong() {
         if [[ "$line" == *"**"* || "$line" == *"__"* ]]; then
             while [[ "$line" == *"**"*"**"* ]]; do
                 local old_line="$line"
@@ -88,6 +86,9 @@ __parse__() {
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
+    }
+
+    __parse_inline_em() {
         if [[ "$line" == *"_"*"_"* ]]; then
             local em_re='(^|[[:space:][:punct:]])_([a-zA-Z0-9][^_]+)_([[:space:][:punct:]]|$)'
             while [[ "$line" =~ $em_re ]]; do
@@ -98,6 +99,9 @@ __parse__() {
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
+    }
+
+    __parse_inline_refs() {
         if [[ "$line" == *"{{"*":"*"}}"* ]]; then
             local topic_re='\{\{[[:space:]]*([a-zA-Z0-9_-]+):([^:}]+)(:([^}]+))?[[:space:]]*\}\}'
             while [[ "$line" =~ $topic_re ]]; do
@@ -168,6 +172,9 @@ __parse__() {
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
+    }
+
+    __parse_inline_links() {
         if [[ "$line" == *"["* && "$line" == *"]("* ]]; then
             local link_re='\[([^]]+)\]\(([^)]+)\)'
             while [[ "$line" =~ $link_re ]]; do
@@ -182,12 +189,28 @@ __parse__() {
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
+    }
+
+    __parse_inline_unmask() {
         for (( i=0; i<m_idx; i++ )); do
             line="${line//%%MASKED_${i}%%/${masked_codes[$i]}}"
         done
     }
 
-    __parse_multiline() {
+    __parse_inline() {
+        if [[ "$line" != *"\`"* && "$line" != *"*"* && "$line" != *"_"* && "$line" != *"+"* && "$line" != *"{"* && "$line" != *"["* && "$line" != *"<"* ]]; then return; fi
+        local -a masked_codes=()
+        local m_idx=0
+        
+        __parse_inline_code
+        __parse_inline_strong
+        __parse_inline_em
+        __parse_inline_refs
+        __parse_inline_links
+        __parse_inline_unmask
+    }
+
+    __parse_block_field() {
         local text="$1"
         local out=""
         local in_inner=0
@@ -257,142 +280,155 @@ __parse__() {
         echo -n "$out"
     }
 
-    __parse_main() {    
+    __parse_code() {
+        if (( in_code_block == 1 )); then
+            if [[ "${line//[[:space:]]/}" == "\`\`\`" ]]; then
+                content+="</code></pre>"$'\n'; in_code_block=0; ignore_next_empty=1
+            else
+                line="${line//&/$_amp}"; line="${line//</$_lt}"; line="${line//>/$_gt}"
+                content+="${line}"$'\n'
+            fi
+            return 0
+        fi
+
+        if [[ -z "$in_custom_block" && "$line" =~ ^[[:space:]]*\`\`\`([a-zA-Z0-9_+-]*)[[:space:]]*$ ]]; then
+            (( list_depth > 0 )) && __parse_list
+            content="${content%<br><br>$'\n'}"
+            in_code_block=1
+            local lang="${BASH_REMATCH[1]}"
+            if [[ -n "$lang" ]]; then content+="<pre><code class=\"language-${lang}\">"$'\n'
+            else content+="<pre><code>"$'\n'; fi
+            return 0
+        fi
+
+        return 1
+    }
+
+    __parse_html() {
+        if [[ -n "$in_custom_block" ]]; then return 1; fi
+        if (( in_html_pre == 1 )); then
+            if [[ "$line" == *"</pre>"* ]]; then in_html_pre=0; fi
+            content+="${line}"$'\n'
+            return 0
+        fi
+        if [[ "$line" == *"<pre"* && "$line" != *"</pre>"* ]]; then
+            in_html_pre=1
+            content+="${line}"$'\n'
+            return 0
+        fi
+        return 1
+    }
+
+    __parse_blocks() {
+        if [[ -n "$in_custom_block" ]]; then
+            if [[ "$line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && [[ "${BASH_REMATCH[1]}" == "$custom_block_indent" ]]; then
+                if [[ "$in_custom_block" == "table" ]]; then __block_table
+                elif [[ "$in_custom_block" == "diagram" ]]; then __block_diagram
+                elif [[ "$in_custom_block" == "hide" ]]; then __block_hide
+                elif [[ "$in_custom_block" == "row" ]]; then __block_row "row" custom_block_buffer
+                elif [[ "$in_custom_block" == "card" ]]; then __block_card "card" custom_block_buffer
+                elif [[ "$in_custom_block" == "buttons" ]]; then __block_buttons "buttons" custom_block_buffer
+                elif [[ "$in_custom_block" == "text" ]]; then __block_text "text" custom_block_buffer
+                elif [[ "$in_custom_block" == "globals" || "$in_custom_block" == "comment" ]]; then :
+                elif [[ -n "${WIKI_BLOCKS[$in_custom_block]:-}" ]]; then content+="</div>"$'\n'
+                elif [[ "$in_custom_block" == "blockquote" ]]; then content+="</blockquote>"$'\n'
+                else
+                    if declare -F "__block_${in_custom_block}" >/dev/null; then
+                        "__block_${in_custom_block}" "$in_custom_block" custom_block_buffer
+                    else
+                        __block_core "$in_custom_block" custom_block_buffer
+                    fi
+                fi
+                in_custom_block=""; custom_block_indent=""; ignore_next_empty=1; return 0
+            else
+                if [[ "$in_custom_block" == "table" ]]; then table_buffer+=("$line"); return 0; fi
+                if [[ "$in_custom_block" == "diagram" ]]; then diagram_buffer+=("$line"); return 0; fi
+                if [[ "$in_custom_block" == "hide" ]]; then hide_buffer+=("$line"); return 0; fi
+                if [[ "$in_custom_block" == "globals" || "$in_custom_block" == "comment" ]]; then return 0; fi
+                if [[ -n "${WIKI_BLOCKS[$in_custom_block]:-}" ]]; then content+="$line"$'\n'; return 0; fi
+
+                custom_block_buffer+=("$line"); return 0
+            fi
+        else
+            if [[ "$line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
+                local curr_indent="${BASH_REMATCH[1]}"
+                local bname="${BASH_REMATCH[2]}"
+                if [[ "$bname" == "table" ]]; then
+                    in_custom_block="table"; custom_block_indent="$curr_indent"; table_buffer=(); return 0
+                elif [[ "$bname" == "diagram" ]]; then
+                    in_custom_block="diagram"; custom_block_indent="$curr_indent"; diagram_buffer=(); return 0
+                elif [[ "$bname" == "hide" ]]; then
+                    in_custom_block="hide"; custom_block_indent="$curr_indent"; hide_buffer=(); return 0
+                elif [[ "$bname" == "row" || "$bname" == "card" || "$bname" == "buttons" || "$bname" == "text" ]]; then
+                    in_custom_block="$bname"; custom_block_indent="$curr_indent"; custom_block_buffer=(); return 0
+                elif [[ "$bname" == "globals" || "$bname" == "comment" ]]; then
+                    in_custom_block="$bname"; custom_block_indent="$curr_indent"; return 0
+                elif [[ -n "${WIKI_BLOCKS[$bname]:-}" ]]; then
+                    in_custom_block="$bname"; custom_block_indent="$curr_indent"
+                    content+="<div class=\"${WIKI_BLOCKS[$bname]}\">"$'\n'
+                    return 0
+                elif [[ "$bname" == "quote" ]]; then
+                    in_custom_block="blockquote"; custom_block_indent="$curr_indent"
+                    content+="<${in_custom_block}>"$'\n'
+                    return 0
+                else
+                    in_custom_block="$bname"; custom_block_indent="$curr_indent"; custom_block_buffer=(); return 0
+                fi
+            fi
+        fi
+        return 1
+    }
+
+    __parse_vars() {
+        if [[ "$line" == *"{{"* ]]; then
+            if [[ "$line" =~ ^\s*\{\{\ *toc\ *\}\}\s*$ ]]; then line="{{TOC_PLACEHOLDER}}"; set_ignore_this_turn=1; fi
+            if [[ "$line" =~ ^\s*\{\{\ *files\ *\}\}\s*$ ]]; then line="{{FILES_PLACEHOLDER}}"; set_ignore_this_turn=1; fi
+        fi
+    }
+
+    __parse_markers() {
+        if [[ "$line" == "#"* ]]; then
+            if [[ "$line" =~ $h_regex ]]; then
+                (( list_depth > 0 )) && __parse_list
+                local h_level="${#BASH_REMATCH[1]}"
+                local h_text="${BASH_REMATCH[2]}"
+                local slug="${h_text,,}"
+                slug="${slug// /_}"; slug="${slug//[^a-z0-9_-]/}"
+                line="<h${h_level} id=\"${slug}\">${h_text}</h${h_level}>"
+                TOC_HTML+="<li class=\"toc-h${h_level}\"><a href=\"#${slug}\">${h_text}</a></li>"$'\n'
+                set_ignore_this_turn=1
+            fi
+        fi
+
+        if [[ "$line" =~ ^([[:space:]]*)([-*+]|[0-9]+\.)[[:space:]]+(.*)$ ]]; then
+            local indent="${#BASH_REMATCH[1]}" marker="${BASH_REMATCH[2]}" item_content="${BASH_REMATCH[3]}"
+            if [[ "$marker" =~ ^[0-9] ]]; then __parse_ol "$indent" "$item_content"; else __parse_ul "$indent" "$item_content"; fi
+            return 1
+        else
+            if (( list_depth > 0 )); then
+                if [[ -z "${line//[[:space:]]/}" ]]; then
+                    if [[ $ignore_next_empty -eq 1 ]]; then return 0; fi
+                    if [[ $was_empty -eq 0 ]]; then content+="<br><br>"$'\n'; was_empty=1; fi
+                    return 0
+                fi
+                if [[ ! "$line" =~ ^[[:space:]]+ ]]; then __parse_list; fi
+            fi
+        fi
+        return 1
+    }
+
+    __parse_main() {
         for line in "${lines[@]}"; do
             set_ignore_this_turn=0
             line="${line%$'\r'}"
-            if (( in_frontmatter == 1 )); then
-                if [[ "$line" =~ ^---\s*$ ]]; then in_frontmatter=2; continue; fi
-                if [[ "$line" =~ ^([[:space:]]*)([a-zA-Z0-9_.-]+):(.*)$ ]]; then
-                    local indent="${#BASH_REMATCH[1]}" key="${BASH_REMATCH[2]}" val="${BASH_REMATCH[3]}"
-                    val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
-                    val="${val#\"}"; val="${val%\"}"; val="${val#\'}"; val="${val%\'}"
-                    local lvl=$((indent / 2))
-                    KEYS_STACK[lvl]="$key"
-                    local flat_key="page" i
-                    for ((i=0; i<=lvl; i++)); do flat_key+="."${KEYS_STACK[i]}; done
-                    if [[ -n "$val" ]]; then PAGE_VARS["$flat_key"]="$val"; fi
-                    if [[ "$key" == "title" && $lvl == 0 ]]; then title="$val"; fi
-                fi
-                continue
-            elif (( in_frontmatter == 0 )); then
-                if [[ "$line" =~ ^---\s*$ ]]; then in_frontmatter=1; continue; fi
-            fi
+
+            __parse_code && continue
+            __parse_blocks && continue
+            __parse_html && continue
             
-            if (( in_code_block == 1 )); then
-                if [[ "${line//[[:space:]]/}" == "\`\`\`" ]]; then
-                    content+="</code></pre>"$'\n'; in_code_block=0; ignore_next_empty=1
-                else
-                    line="${line//&/$_amp}"; line="${line//</$_lt}"; line="${line//>/$_gt}"
-                    content+="${line}"$'\n'
-                fi
-                continue
-            fi
-            
-            if [[ -n "$in_custom_block" ]]; then
-                if [[ "$line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && [[ "${BASH_REMATCH[1]}" == "$custom_block_indent" ]]; then
-                    if [[ "$in_custom_block" == "table" ]]; then __block_table
-                    elif [[ "$in_custom_block" == "diagram" ]]; then __block_diagram
-                    elif [[ "$in_custom_block" == "hide" ]]; then __block_hide
-                    elif [[ "$in_custom_block" == "globals" || "$in_custom_block" == "comment" ]]; then :
-                    elif [[ -n "${WIKI_BLOCKS[$in_custom_block]:-}" ]]; then content+="</div>"$'\n'
-                    elif [[ "$in_custom_block" == "blockquote" ]]; then content+="</blockquote>"$'\n'
-                    else 
-                        if declare -F "__block_${in_custom_block}" >/dev/null; then
-                            "__block_${in_custom_block}" "$in_custom_block" custom_block_buffer
-                        else
-                            __block_core "$in_custom_block" custom_block_buffer
-                        fi
-                    fi
-                    in_custom_block=""; custom_block_indent=""; ignore_next_empty=1; continue
-                else
-                    if [[ "$in_custom_block" == "table" ]]; then table_buffer+=("$line"); continue; fi
-                    if [[ "$in_custom_block" == "diagram" ]]; then diagram_buffer+=("$line"); continue; fi
-                    if [[ "$in_custom_block" == "hide" ]]; then hide_buffer+=("$line"); continue; fi
-                    if [[ "$in_custom_block" == "globals" || "$in_custom_block" == "comment" ]]; then continue; fi
-                    if [[ -n "${WIKI_BLOCKS[$in_custom_block]:-}" ]]; then content+="$line"$'\n'; continue; fi
-                    
-                    custom_block_buffer+=("$line"); continue
-                fi
-            else
-                if [[ "$line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
-                    local curr_indent="${BASH_REMATCH[1]}"
-                    local bname="${BASH_REMATCH[2]}"
-                    if [[ "$bname" == "table" ]]; then 
-                        in_custom_block="table"; custom_block_indent="$curr_indent"; table_buffer=(); continue
-                    elif [[ "$bname" == "diagram" ]]; then 
-                        in_custom_block="diagram"; custom_block_indent="$curr_indent"; diagram_buffer=(); continue
-                    elif [[ "$bname" == "hide" ]]; then 
-                        in_custom_block="hide"; custom_block_indent="$curr_indent"; hide_buffer=(); continue
-                    elif [[ "$bname" == "globals" || "$bname" == "comment" ]]; then 
-                        in_custom_block="$bname"; custom_block_indent="$curr_indent"; continue
-                    elif [[ -n "${WIKI_BLOCKS[$bname]:-}" ]]; then
-                        in_custom_block="$bname"; custom_block_indent="$curr_indent"
-                        content+="<div class=\"${WIKI_BLOCKS[$bname]}\">"$'\n'
-                        continue
-                    elif [[ "$bname" == "quote" ]]; then
-                        in_custom_block="blockquote"; custom_block_indent="$curr_indent"
-                        content+="<${in_custom_block}>"$'\n'
-                        continue
-                    else
-                        in_custom_block="$bname"; custom_block_indent="$curr_indent"; custom_block_buffer=(); continue
-                    fi
-                fi
-                
-                if [[ "$line" =~ ^[[:space:]]*\`\`\`([a-zA-Z0-9_+-]*)[[:space:]]*$ ]]; then
-                    (( list_depth > 0 )) && __parse_list
-                    content="${content%<br><br>$'\n'}"
-                    in_code_block=1
-                    local lang="${BASH_REMATCH[1]}"
-                    if [[ -n "$lang" ]]; then content+="<pre><code class=\"language-${lang}\">"$'\n'
-                    else content+="<pre><code>"$'\n'; fi
-                    continue
-                fi
-                
-                if (( in_html_pre == 1 )); then
-                    if [[ "$line" == *"</pre>"* ]]; then in_html_pre=0; fi
-                    content+="${line}"$'\n'
-                    continue
-                fi
-                if [[ "$line" == *"<pre"* && "$line" != *"</pre>"* ]]; then
-                    in_html_pre=1
-                    content+="${line}"$'\n'
-                    continue
-                fi
-            fi
-            
-            if [[ "$line" == *"{{"* ]]; then
-                if [[ "$line" =~ ^\s*\{\{\ *toc\ *\}\}\s*$ ]]; then line="{{TOC_PLACEHOLDER}}"; set_ignore_this_turn=1; fi
-                if [[ "$line" =~ ^\s*\{\{\ *files\ *\}\}\s*$ ]]; then line="{{FILES_PLACEHOLDER}}"; set_ignore_this_turn=1; fi
-            fi
-            
-            if [[ "$line" == "#"* ]]; then
-                if [[ "$line" =~ $h_regex ]]; then
-                    (( list_depth > 0 )) && __parse_list
-                    local h_level="${#BASH_REMATCH[1]}"
-                    local h_text="${BASH_REMATCH[2]}"
-                    local slug="${h_text,,}"
-                    slug="${slug// /_}"; slug="${slug//[^a-z0-9_-]/}"
-                    line="<h${h_level} id=\"${slug}\">${h_text}</h${h_level}>"
-                    TOC_HTML+="<li class=\"toc-h${h_level}\"><a href=\"#${slug}\">${h_text}</a></li>"$'\n'
-                    set_ignore_this_turn=1
-                fi
-            fi
-            
-            if [[ "$line" =~ ^([[:space:]]*)([-*+]|[0-9]+\.)[[:space:]]+(.*)$ ]]; then
-                local indent="${#BASH_REMATCH[1]}" marker="${BASH_REMATCH[2]}" item_content="${BASH_REMATCH[3]}"
-                if [[ "$marker" =~ ^[0-9] ]]; then __parse_ol "$indent" "$item_content"; else __parse_ul "$indent" "$item_content"; fi
-            else
-                if (( list_depth > 0 )); then
-                    if [[ -z "${line//[[:space:]]/}" ]]; then
-                        if [[ $ignore_next_empty -eq 1 ]]; then continue; fi
-                        if [[ $was_empty -eq 0 ]]; then content+="<br><br>"$'\n'; was_empty=1; fi
-                        continue
-                    fi
-                    if [[ ! "$line" =~ ^[[:space:]]+ ]]; then __parse_list; fi
-                fi
-            fi
-            
+            __parse_vars
+            __parse_markers && continue
+
             __parse_inline
             if [[ -z "${line//[[:space:]]/}" ]]; then
                 if [[ $ignore_next_empty -eq 1 ]]; then :
@@ -404,4 +440,5 @@ __parse__() {
         done
         __parse_list
     }
+
 }

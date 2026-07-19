@@ -1,0 +1,536 @@
+#! /bin/bash
+
+__py__() {
+    declare -a PY_IGNORE=(
+        "build/"
+        "dist/"
+        "__pycache__/"
+        "*.py[oc]"
+        "wheels/"
+        "*.egg-info"
+        ".env"
+    )
+
+    py.__help__() {
+        echo "USAGE:
+    py [action] [flags]
+ACTIONS:
+    init ................. initialize an environment
+    reinit ............... re-initialize an environment
+    add  ................. add dependencies to a requirements file
+    remove ............... delete dependencies from a requirements file
+    install .............. install packages
+    uninstall ............ uninstall packages
+    update ............... update packages
+    exec ................. execute some file or command
+    dot .................. enter dependency directory shell
+    list ................. list dependencies and status
+    build ................ build package
+    push ................. publish built package
+    shell ................ activate environment shell
+    version .............. bump project version
+    use .................. switch environment python version
+FLAGS:
+    -f, --from .................... exec action from somewhere
+    -t, --to ...................... exec action into somewhere
+    -e, --env, --environment ...... exec action in some environment
+    -r, --rec, --recursive ........ exec action recursively
+    -p, --path .................... exec action from some path
+    -R, --reg, --registry ......... exec action for some registry
+    --no-deps ..................... do not install dependencies
+    --branch ...................... branch for VCS dependencies
+    --commit ...................... commit for VCS dependencies
+    --protocol .................... protocol for VCS dependencies (https|ssh)"
+    }
+
+    _py_find() {
+        local kind="$1" to_find="$2" dir="$PWD"
+        while [[ "$dir" != "/" ]]; do
+            case "$kind" in
+                file) [[ -f "$dir/$to_find" ]] && { echo "$dir/$to_find"; return 0; } ;;
+                dir)  [[ -d "$dir/$to_find" ]] && { echo "$dir/$to_find"; return 0; } ;;
+                root) [[ -f "$dir/pyproject.toml" ]] && { echo "$dir"; return 0; } ;;
+            esac
+            dir="${dir%/*}"
+            [[ -z "$dir" ]] && dir="/"
+        done
+        return 1
+    }
+
+    _py_inside() {
+        if [[ -z "$(_py_find root)" ]]; then
+            __log "You are not in a Python initialized directory." -t error -l py
+            return 1
+        fi
+        return 0
+    }
+
+    _py_env() {
+        if [[ -z "$2" ]]; then
+            echo "${1:-main}"
+        else
+            __log "Unexpected arguments: ${*:2}" -t error -l py
+            return 1
+        fi
+    }
+
+    _py_env_dir() {
+        local env="$1" root
+        root=$(_py_find root) || return 1
+        echo "${root}/.venv${env:+.${env}}"
+    }
+
+    _py_site_dir() {
+        local env="$1" envdir d
+        envdir=$(_py_env_dir "$env") || return 1
+        shopt -s nullglob
+        for d in "$envdir"/lib/python*/site-packages; do
+            if [[ -d "$d" ]]; then
+                echo "$d"
+                shopt -u nullglob
+                return 0
+            fi
+        done
+        shopt -u nullglob
+        echo "${envdir}/lib/python/site-packages"
+    }
+
+    _py_has_venv() {
+        local envdir
+        envdir=$(_py_env_dir "$1") || return 1
+        [[ -d "$envdir" && -d "$envdir/bin" ]]
+    }
+
+    _py_req() {
+        local env="$1" root
+        root=$(_py_find root) || return 1
+        echo "$root/requirements${env:+.${env}}.txt"
+    }
+
+    _py_activate() {
+        local env="$1" root venv
+        root=$(_py_find root)
+        venv="${root}/.venv${env:+.${env}}"
+        if [[ -d "$venv" ]]; then
+            source "$venv/bin/activate"
+        else
+            __log "The environment '$env' is not initialized." -t error -l py
+            return 1
+        fi
+    }
+
+    _py_dep_names() {
+        local pyproject line in_deps=0 pkg
+        pyproject=$(_py_find root) || return 0
+        pyproject="$pyproject/pyproject.toml"
+        [[ ! -f "$pyproject" ]] && return 0
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$line" =~ ^[[:space:]]*dependencies[[:space:]]*=[[:space:]]*\[ ]]; then
+                in_deps=1
+                continue
+            fi
+            (( in_deps == 0 )) && continue
+            [[ "$line" == *\]* ]] && break
+            if [[ "$line" =~ ^[[:space:]]*\"([^\"]+)\" ]]; then
+                pkg="${BASH_REMATCH[1]}"
+                pkg="${pkg%%[<>=! @]*}"
+                pkg="${pkg#git+}"
+                [[ -n "$pkg" ]] && echo "$pkg"
+            fi
+        done < "$pyproject"
+    }
+
+    _py_resolve_python_on_path() {
+        local ver="$1" cand="python${ver}" maj_min="${ver%.*}"
+        if command -v "$cand" >/dev/null 2>&1; then
+            command -v "$cand"
+            return 0
+        fi
+        if [[ "$maj_min" != "$ver" ]]; then
+            cand="python${maj_min}"
+            if command -v "$cand" >/dev/null 2>&1; then
+                command -v "$cand"
+                return 0
+            fi
+        fi
+        return 1
+    }
+
+    _py_find_latest_python_on_path() {
+        if command -v python3 >/dev/null 2>&1; then
+            command -v python3
+            return 0
+        elif command -v python >/dev/null 2>&1; then
+            command -v python
+            return 0
+        fi
+        return 1
+    }
+
+    py.init() {
+        local env="" req_version="" mode="link" root project_name pyproject python_bin py_ver envdir libdir venv_bin t gitignore_path include_str patterns entry base pat matched
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                -v|--version) req_version="$2"; shift 2 ;;
+                -l|--link) mode="link"; shift ;;
+                -c|--copy) mode="copy"; shift ;;
+                -*) __log "Unknown option '$1'" -t error -l py; return 1 ;;
+                *) env="$1"; shift ;;
+            esac
+        done
+        root=$(_py_find root 2>/dev/null)
+        if [[ -z "$root" ]]; then
+            root="$PWD"
+            project_name="${root##*/}"
+            pyproject="$root/pyproject.toml"
+            echo "[project]
+name = \"$project_name\"
+version = \"0.0.0\"
+description = \"\"
+readme = \"README.md\"
+requires-python = \">=3.9\"
+dependencies = []
+[build-system]
+requires = [\"setuptools>=61.0\", \"wheel\"]
+build-backend = \"setuptools.build_meta\"
+[tool.setuptools.packages.find]
+where = [\".\"]
+include = [\"${project_name}*\"]" > "$pyproject"
+        else
+            pyproject="$root/pyproject.toml"
+            if [[ -f "$pyproject" ]]; then
+                local line
+                while IFS= read -r line || [[ -n "$line" ]]; do
+                    if [[ "$line" =~ ^[[:space:]]*name[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
+                        project_name="${BASH_REMATCH[1]}"
+                        break
+                    fi
+                done < "$pyproject"
+            fi
+            project_name=${project_name:-"${root##*/}"}
+        fi
+        [[ -f "$root/.env${env:+.$env}" ]] || echo "" > "$root/.env${env:+.$env}"
+        local req_file="$root/requirements${env:+.${env}}.txt"
+        [[ -f "$req_file" ]] || echo "" > "$req_file"
+        if [[ -n "$project_name" && ! -d "$root/$project_name" ]]; then
+            mkdir -p "$root/$project_name"
+            echo "" > "$root/$project_name/__init__.py"
+        fi
+        if [[ -n "$req_version" ]]; then
+            python_bin=$(_py_resolve_python_on_path "$req_version") || return 1
+        else
+            python_bin=$(_py_find_latest_python_on_path) || return 1
+        fi
+        py_ver=$("$python_bin" -c 'import sys;print(".".join(map(str,sys.version_info[:3])))') || return 1
+        
+        local maj_min="${py_ver%.*}" major="${maj_min%%.*}"
+        
+        envdir=$(_py_env_dir "$env") || return 1
+        mkdir -p "$envdir"
+        libdir="${envdir}/lib/python${maj_min}/site-packages"
+        mkdir -p "$libdir" "$envdir/bin"
+        
+        for t in "python" "python${major}" "python${maj_min}"; do
+            local dst="$envdir/bin/$t"
+            [[ -e "$dst" ]] && continue
+            if [[ "$mode" == "copy" ]]; then cp "$python_bin" "$dst"; else ln -sf "$python_bin" "$dst"; fi
+        done
+        gitignore_path="$root/.gitignore"
+        [[ -f "$gitignore_path" ]] || echo "" > "$gitignore_path"
+        for ignore in "${PY_IGNORE[@]}"; do
+            local found_ign=0 line_ign
+            while IFS= read -r line_ign || [[ -n "$line_ign" ]]; do
+                [[ "$line_ign" == "$ignore" ]] && { found_ign=1; break; }
+            done < "$gitignore_path"
+            (( found_ign == 0 )) && echo "$ignore" >> "$gitignore_path"
+        done
+        local found_venv=0 line_venv
+        while IFS= read -r line_venv || [[ -n "$line_venv" ]]; do
+            [[ "$line_venv" == ".venv" ]] && { found_venv=1; break; }
+        done < "$gitignore_path"
+        (( found_venv == 0 )) && echo ".venv" >> "$gitignore_path"
+        
+        local in_find=0 line_find
+        while IFS= read -r line_find || [[ -n "$line_find" ]]; do
+            [[ "$line_find" == *"[tool.setuptools.packages.find]"* ]] && { in_find=1; continue; }
+            (( in_find == 1 )) && [[ "$line_find" == "["* ]] && break
+            if (( in_find == 1 )) && [[ "$line_find" =~ ^[[:space:]]*include[[:space:]]*=[[:space:]]*\[(.*)\] ]]; then
+                include_str="${BASH_REMATCH[1]//\"/}"
+                include_str="${include_str//,/ }"
+                break
+            fi
+        done < "$pyproject"
+
+        if [[ -n "$include_str" ]]; then read -ra patterns <<< "$include_str"; else patterns=("${project_name}*"); fi
+        for entry in "$root"/*; do
+            [[ -d "$entry" ]] || continue
+            base="${entry##*/}"
+            case "$base" in dist|build|.venv*|.git|__pycache__|*.egg-info) continue ;; esac
+            matched=false
+            for pat in "${patterns[@]}"; do [[ "$base" == $pat ]] && { matched=true; break; }; done
+            $matched || continue
+            [[ ! -f "$entry/__init__.py" || -L "$libdir/$base" || -e "$libdir/$base" ]] && continue
+            ln -s "$entry" "$libdir/$base"
+        done
+        __log "Environment initialized with Python $py_ver" -t success -l py
+    }
+
+    py.add() {
+        _py_inside || return 1
+        local raw_dep="" provider="" dep_name="" version="" branch="" commit="" protocol="https" root req_file pyproject spec_pyproject spec_requirements host base_url url_no_query repo_segment repo_name git_url escaped_spec tmp
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --from) provider="$2"; shift 2 ;;
+                --name) dep_name="$2"; shift 2 ;;
+                --version) version="$2"; shift 2 ;;
+                --branch) branch="$2"; shift 2 ;;
+                --commit) commit="$2"; shift 2 ;;
+                --protocol) protocol="$2"; shift 2 ;;
+                -*) __log "Unknown option '$1'" -t error -l py; return 1 ;;
+                *) raw_dep="$1"; shift ;;
+            esac
+        done
+        [[ -z "$raw_dep" ]] && return 1
+        if [[ -z "$provider" ]]; then
+            if [[ "$raw_dep" == */* && "$raw_dep" != /* && "$raw_dep" != */ ]]; then provider="github"; else provider="pypi"; fi
+        fi
+        root=$(_py_find root)
+        req_file="$root/requirements.txt"
+        pyproject="$root/pyproject.toml"
+        [[ ! -f "$pyproject" ]] && return 1
+        [[ -f "$req_file" ]] || echo "" > "$req_file"
+        if [[ "$provider" == "pypi" ]]; then
+            [[ -z "$dep_name" ]] && dep_name="$raw_dep"
+            if [[ -n "$version" ]]; then
+                case "$version" in [\<\>\=\!\~]*) spec_pyproject="${dep_name}${version}" ;; *) spec_pyproject="${dep_name}==${version}" ;; esac
+            else
+                spec_pyproject="${dep_name}"
+            fi
+            spec_requirements="$spec_pyproject"
+        else
+            host="$provider"
+            case "$provider" in github) host="github.com" ;; gitlab) host="gitlab.com" ;; bitbucket) host="bitbucket.org" ;; esac
+            base_url="$raw_dep"
+            if [[ "$base_url" != *"://"* ]]; then
+                if [[ "$protocol" == "ssh" ]]; then base_url="ssh://git@${host}/${raw_dep}"; else base_url="https://${host}/${raw_dep}"; fi
+            fi
+            url_no_query="${base_url%%\?*}"
+            repo_segment="${url_no_query##*/}"
+            repo_name="${repo_segment%.git}"
+            [[ -z "$dep_name" ]] && dep_name="$repo_name"
+            git_url="$base_url"
+            [[ "$git_url" != git+* ]] && git_url="git+${git_url}"
+            spec_pyproject="${dep_name} @ ${git_url}"
+            spec_requirements="${git_url}"
+            if [[ -n "$commit" ]]; then spec_pyproject+="@${commit}"; spec_requirements+="@${commit}"; elif [[ -n "$branch" ]]; then spec_pyproject+="@${branch}"; spec_requirements+="@${branch}"; fi
+        fi
+
+        local found_req=0 line_req
+        while IFS= read -r line_req || [[ -n "$line_req" ]]; do
+            [[ "$line_req" == "$spec_requirements" ]] && { found_req=1; break; }
+        done < "$req_file"
+        (( found_req == 0 )) && echo "$spec_requirements" >> "$req_file"
+
+        local found_dep=0 line_dep
+        while IFS= read -r line_dep || [[ -n "$line_dep" ]]; do
+            if [[ "$line_dep" =~ ^[[:space:]]*\"${dep_name}\b ]]; then found_dep=1; break; fi
+        done < "$pyproject"
+        (( found_dep == 1 )) && return 0
+
+        local in_deps=0 added=0 line_proj
+        tmp="${pyproject}.tmp"
+        > "$tmp"
+        while IFS= read -r line_proj || [[ -n "$line_proj" ]]; do
+            if [[ "$line_proj" =~ ^[[:space:]]*dependencies[[:space:]]*= ]] && (( in_deps == 0 )); then
+                in_deps=1
+                echo "$line_proj" >> "$tmp"
+                continue
+            fi
+            if (( in_deps == 1 )) && [[ "$line_proj" == *\]* ]]; then
+                printf "    \"%s\",\n" "$spec_pyproject" >> "$tmp"
+                added=1
+                in_deps=0
+                echo "$line_proj" >> "$tmp"
+                continue
+            fi
+            echo "$line_proj" >> "$tmp"
+        done < "$pyproject"
+        
+        if (( added == 0 )); then
+            echo "" >> "$tmp"
+            echo "dependencies = [" >> "$tmp"
+            printf "    \"%s\",\n" "$spec_pyproject" >> "$tmp"
+            echo "]" >> "$tmp"
+        fi
+        mv "$tmp" "$pyproject"
+        __log "Added '$dep_name'." -t success -l py
+    }
+
+    py.install() {
+        _py_inside || return 1
+        local packages=() registry="" env="" path_file="" recursive=false no_deps=false protocol="https" specified_branch="" specified_commit="" specified_version="" sitedir req_file pkg pip_args
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                -r|--rec|--recursive) recursive="true"; shift ;;
+                -f|--from|--registry) registry="$2"; shift 2 ;;
+                -t|--to|-e|--env|--environment) env="$2"; shift 2 ;;
+                -p|--path) path_file="$2"; shift 2 ;;
+                -b|--branch) specified_branch="$2"; shift 2 ;;
+                -c|--commit) specified_commit="$2"; shift 2 ;;
+                -v|--version) specified_version="$2"; shift 2 ;;
+                --protocol) protocol="$2"; shift 2 ;;
+                --no-deps) no_deps=true; shift ;;
+                -*) __log "Unknown option '$1'" -t error -l py; return 1 ;;
+                *) packages+=("$1"); shift ;;
+            esac
+        done
+        _py_has_venv "$env" || return 1
+        sitedir=$(_py_site_dir "$env") || return 1
+        if $recursive; then
+            if [[ -n "$path_file" ]]; then
+                req_file="$path_file"
+            else
+                req_file=$(_py_req "$env")
+            fi
+            pip_args=()
+            $no_deps && pip_args+=(--no-deps)
+            python3 -m pip install --upgrade --target "$sitedir" "${pip_args[@]}" -r "$req_file"
+        else
+            for pkg in "${packages[@]}"; do
+                pip_args=()
+                $no_deps && pip_args+=(--no-deps)
+                python3 -m pip install --upgrade --target "$sitedir" "${pip_args[@]}" "$pkg"
+            done
+        fi
+    }
+
+    py.exec() {
+        _py_inside || return 1
+        local env="" root args=() envdir sitedir venv_bin venv_python env_file pp new_path
+        root=$(_py_find root) || return 1
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                -f|--from|-e|--env|--environment) env="$2"; shift 2 ;;
+                *) args+=("$1"); shift ;;
+            esac
+        done
+        [[ ${#args[@]} -eq 0 ]] && return 1
+        envdir=$(_py_env_dir "$env") || return 1
+        sitedir=$(_py_site_dir "$env") || true
+        venv_bin="${envdir}/bin"
+        if [[ -x "$venv_bin/python" ]]; then venv_python="$venv_bin/python"; elif [[ -x "$venv_bin/python3" ]]; then venv_python="$venv_bin/python3"; fi
+        env_file="${root}/.env${env:+.$env}"
+        if [[ -f "$env_file" ]]; then
+            set -a
+            source <(while IFS= read -r line || [[ -n "$line" ]]; do echo "$line"; done < "$env_file")
+            set +a
+        fi
+        pp="$root"
+        [[ -n "$sitedir" && -d "$sitedir" ]] && pp="$sitedir:$pp"
+        [[ -n "$PYTHONPATH" ]] && pp="$pp:$PYTHONPATH"
+        new_path="$PATH"
+        [[ -d "$venv_bin" ]] && new_path="$venv_bin:$PATH"
+        if [[ -f "${args[0]}" ]]; then
+            if [[ -n "$venv_python" ]]; then
+                PATH="$new_path" PYTHONPATH="$pp" "$venv_python" "${args[@]}"
+            else
+                PATH="$new_path" PYTHONPATH="$pp" python3 "${args[@]}"
+            fi
+            return $?
+        fi
+        PATH="$new_path" PYTHONPATH="$pp" "${args[@]}"
+    }
+
+    py.list() {
+        _py_inside || return 1
+        local env="" venv_path root pyproject site_packages line in_deps=0 d
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                -e|--env) env="$2"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        venv_path=$(_py_env_dir "$env")
+        [[ ! -d "$venv_path" ]] && return 1
+        root=$(_py_find root)
+        pyproject="$root/pyproject.toml"
+        [[ ! -f "$pyproject" ]] && return 1
+        site_packages=$(_py_site_dir "$env")
+        
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$line" =~ ^[[:space:]]*dependencies[[:space:]]*=[[:space:]]*\[ ]]; then
+                in_deps=1
+                continue
+            fi
+            (( in_deps == 0 )) && continue
+            [[ "$line" == *\]* ]] && break
+            if [[ "$line" =~ ^[[:space:]]*\"([^\"]+)\" ]]; then
+                local pkg_spec="${BASH_REMATCH[1]}"
+                local clean_spec="${pkg_spec%%[<>=! @]*}"
+                clean_spec="${clean_spec#git+}"
+                local status="not installed"
+                
+                shopt -s nullglob
+                local matches=("$site_packages/$clean_spec" "$site_packages/${clean_spec//-/_}" "$site_packages/${clean_spec}"*.dist-info "$site_packages/${clean_spec//-/_}"*.dist-info)
+                shopt -u nullglob
+                
+                for d in "${matches[@]}"; do
+                    if [[ -d "$d" ]]; then
+                        status="installed"
+                        break
+                    fi
+                done
+                printf "%-30s %s\n" "$pkg_spec" "$status"
+            fi
+        done < "$pyproject"
+    }
+
+    py() {
+        local cmd="$1"
+        shift || true
+        case "$cmd" in
+            I|init)       py.init "$@" ;;
+            a|add)        py.add "$@" ;;
+            i|install)    py.install "$@" ;;
+            x|exec|run)   py.exec "$@" ;;
+            ls|list)      py.list "$@" ;;
+            -h|--help|"") py.__help__ ;;
+            *)            __log "Command '$cmd' not supported or unimplemented." -t error -l py; return 1 ;;
+        esac
+    }
+
+    py.__compl__() {
+        local cur="${COMP_WORDS[COMP_CWORD]}" prev="${COMP_WORDS[COMP_CWORD-1]}" cmd0="${COMP_WORDS[1]}"
+        COMPREPLY=()
+        if [[ $COMP_CWORD -eq 1 ]]; then
+            COMPREPLY=($(compgen -W "init add list version build push install uninstall remove shell exec update" -- "$cur"))
+            return 0
+        fi
+        case "$cmd0" in
+            add)
+                if [[ $cur == -* ]]; then
+                    COMPREPLY=($(compgen -W "--from --name --version --branch --commit --protocol --no-deps" -- "$cur"))
+                fi
+                ;;
+            install)
+                if [[ $cur == -* ]]; then
+                    COMPREPLY=($(compgen -W "--from --registry --to --env --path --recursive --no-deps --branch --commit --version --protocol" -- "$cur"))
+                fi
+                ;;
+            exec)
+                if [[ $cur == -* ]]; then
+                    COMPREPLY=($(compgen -W "--from --env" -- "$cur"))
+                fi
+                ;;
+            list)
+                if [[ $cur == -* ]]; then
+                    COMPREPLY=($(compgen -W "--installed --not-installed --env -e" -- "$cur"))
+                fi
+                ;;
+        esac
+    }
+
+    py.__init__() {
+        __compl py
+    }
+}

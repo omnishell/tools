@@ -1,13 +1,14 @@
 #! /bin/bash
 
 __blocks__() {
+    
     __block_core() {
         local bname="$1"
         local -n buffer_ref="$2"
-        
+                 
         local -a BLOCK_KEYS=()
         local -A BLOCK_VALS=()
-        
+                 
         local current_key="" current_val="" b_line
         for b_line in "${buffer_ref[@]}"; do
             if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
@@ -29,7 +30,7 @@ __blocks__() {
             BLOCK_VALS["$current_key"]="$current_val"
             BLOCK_KEYS+=("$current_key")
         fi
-        
+                 
         local -A BLOCK_DISPLAY_KEYS=()
         local -A BLOCK_DISPLAY_VALS=()
         local k
@@ -37,15 +38,13 @@ __blocks__() {
             BLOCK_DISPLAY_KEYS["$k"]="$k"
             BLOCK_DISPLAY_VALS["$k"]="${BLOCK_VALS[$k]}"
         done
-
         local SKIP_DEFAULT_REFS=0
         if declare -F "__block_${bname}_hook" >/dev/null; then
             "__block_${bname}_hook"
         fi
-
         local block_entry="${BLOCK_VALS[__entry__]:-}"
         local block_context="${BLOCK_VALS[__context__]:-}"
-        
+                 
         local first_content_key="" first_content_val=""
         if [[ -n "${BLOCK_VALS[term]:-}" ]]; then
             first_content_key="term"
@@ -62,7 +61,7 @@ __blocks__() {
                 fi
             done
         fi
-        
+                 
         local raw_id="${BLOCK_VALS[__id__]:-}"
         if [[ -z "$raw_id" ]]; then
             raw_id="${block_entry:-${first_content_val}}"
@@ -70,27 +69,27 @@ __blocks__() {
         if [[ -z "$raw_id" && ${#BLOCK_KEYS[@]} -gt 0 ]]; then
             raw_id="${BLOCK_VALS[${BLOCK_KEYS[0]}]}"
         fi
-        
+                 
         local clean_id="$(__slugify "$raw_id")"
         [[ -z "$clean_id" ]] && clean_id="rnd-$RANDOM"
-        
+                 
         local ref_key="$clean_id"
         if [[ -n "$block_context" && "$raw_id" != *.* ]]; then
             ref_key="$(__slugify "${block_context}.${raw_id}")"
         fi
-        
+                 
         local anchor_id_slug="${ref_key//./-}"
         local anchor_id="block-${bname}-${anchor_id_slug}"
-        
+                 
         local BLOCK_ID="$clean_id"
         local BLOCK_TITLE="${block_entry:-${first_content_val:-$raw_id}}"
-        
+                 
         if [[ $SKIP_DEFAULT_REFS -eq 0 && -n "$w_name" ]]; then
             declare -p WIKI_REFS >/dev/null 2>&1 || declare -g -A WIKI_REFS=()
             WIKI_REFS["${bname}::${ref_key}"]="${pagename}:${anchor_id}"
             WIKI_REFS["${w_name}::${ENV:-}::${bname}::${ref_key}"]="${pagename}:${anchor_id}"
         fi
-        
+                 
         if [[ -n "${BLOCK_VALS[__context__]:-}" ]]; then
             local first_dk=""
             for k in "${BLOCK_KEYS[@]}"; do
@@ -103,31 +102,31 @@ __blocks__() {
                 BLOCK_DISPLAY_VALS["$first_dk"]+=" <em class=\"def-context\">(${BLOCK_VALS[__context__]})</em>"
             fi
         fi
-        
+                 
         local html="<block id=\"${anchor_id}\" class=\"block-${bname}\">"$'\n'
         html+="    <fields id=\"fields-${bname}-${anchor_id_slug}\" class=\"fields-${bname}\">"$'\n'
-        
+                 
         local json_str="{\"url\":\"$(__json_escape "/${pagename//./\/}.html#${anchor_id}")\""
-        
+                 
         if [[ -n "${BLOCK_VALS[__context__]:-}" ]]; then
             json_str+=",\"__context__\":\"$(__json_escape "${BLOCK_VALS[__context__]}")\""
         fi
-        
+                 
         for k in "${BLOCK_KEYS[@]}"; do
             [[ "$k" == "__id__" || "$k" == "__context__" || "$k" == "__entry__" ]] && continue
-            
+                         
             local v="${BLOCK_VALS[$k]}"
             json_str+=",\"${k}\":\"$(__json_escape "$v")\""
-            
+                         
             local dk="${BLOCK_DISPLAY_KEYS[$k]:-}"
             [[ -z "$dk" ]] && continue
-            
+                         
             local dv="${BLOCK_DISPLAY_VALS[$k]}"
-            
+                         
             if [[ "$k" == "__refs__" || "$dk" == "__refs__" ]]; then
                 local prefix_name="refs"
                 [[ "$k" != "__refs__" ]] && prefix_name="$k"
-                
+                                 
                 local rel_out="<ul>"$'\n'
                 local OIFS="$IFS"; IFS=','
                 local r_items=($dv)
@@ -148,28 +147,28 @@ __blocks__() {
                 dv="$rel_out"
                 dk="$prefix_name"
             elif [[ "${BLOCK_VALS[$k]}" == "$dv" ]]; then
-                dv="$(__parse_multiline "$dv")"
+                dv="$(__parse_block_field "$dv")"
             fi
-            
+                         
             html+="        <field id=\"field-${bname}-${dk}-${anchor_id_slug}\" class=\"field-${bname}-${dk}\">"$'\n'
             html+="            <prefix id=\"prefix-${bname}-${dk}-${anchor_id_slug}\" class=\"prefix-${bname}-${dk}\">${dk}: </prefix><div id=\"text-${bname}-${dk}-${anchor_id_slug}\" class=\"text-prefix-${bname}-${dk}\">${dv}</div>"$'\n'
             html+="        </field>"$'\n'
         done
-        
+                 
         html+="    </fields>"$'\n'
         html+="</block>"$'\n'
         json_str+="}"
-        
+                 
         SEARCH_INDEX_MAP["$bname"]+="${json_str},"$'\n'
-        
+                 
         if [[ -z "${BLOCK_TITLE_KEYS[$bname]:-}" ]]; then
             BLOCK_TITLE_KEYS["$bname"]="${first_content_key:-${BLOCK_KEYS[0]}}"
         fi
-        
+                 
         LIST_HTML_MAP["$bname"]+="<li><a href=\"#${anchor_id}\">${BLOCK_TITLE}</a></li>"$'\n'
-        
+                 
         content+="${html}"
-    }       
+    }
     
     __block_def() {
         local bname="$1"
@@ -826,9 +825,169 @@ __blocks__() {
         content+="${out_html}"
     }
 
+    __get_style_attr() {
+        local b_width="$1" b_style="$2"
+        local inline_style=""
+        if [[ -n "$b_width" ]]; then
+            if [[ "$b_width" == *"="* ]]; then
+                local prev_IFS="$IFS"
+                IFS=','
+                local w_tokens=($b_width)
+                IFS="$prev_IFS"
+                local w_tok
+                for w_tok in "${w_tokens[@]}"; do
+                    w_tok="${w_tok#"${w_tok%%[![:space:]]*}"}"
+                    w_tok="${w_tok%"${w_tok##*[![:space:]]}"}"
+                    local prop="${w_tok%%=*}"
+                    local val="${w_tok#*=}"
+                    [[ "$val" =~ ^[0-9]+$ ]] && val="${val}px"
+                    if [[ "$prop" == "max" ]]; then inline_style+="max-width:${val};"
+                    elif [[ "$prop" == "min" ]]; then inline_style+="min-width:${val};"
+                    elif [[ "$prop" == "width" ]]; then inline_style+="width:${val};"
+                    fi
+                done
+            else
+                [[ "$b_width" =~ ^[0-9]+$ ]] && b_width="${b_width}px"
+                inline_style+="width:${b_width};"
+            fi
+        fi
+        if [[ -n "$b_style" ]]; then
+            inline_style+="${b_style}"
+            [[ "${inline_style: -1}" != ";" && -n "$inline_style" ]] && inline_style+=";"
+        fi
+        if [[ -n "$inline_style" ]]; then
+            printf ' style="%s"' "$inline_style"
+        fi
+    }
+
+    __block_text() {
+        local bname="$1"
+        local _ref="$2[@]"
+        local -a my_buffer=("${!_ref}")
+        if [[ ${#my_buffer[@]} -eq 0 ]]; then return; fi
+        local t_id="rnd-$RANDOM"
+        local t_text="" b_width="" b_style=""
+        
+        local -A child_html=()
+        local in_child="" child_name="" child_indent=""
+        local -a child_buffer=()
+        local -a child_order=()
+        
+        local current_key="" current_val="" b_line
+        for b_line in "${my_buffer[@]}"; do
+            if [[ -n "$in_child" ]]; then
+                if [[ "$b_line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && [[ "${BASH_REMATCH[1]}" == "$child_indent" ]]; then
+                    local c_id="" c_line
+                    for c_line in "${child_buffer[@]}"; do
+                        if [[ "$c_line" =~ ^[[:space:]]*::[[:space:]]*__id__[[:space:]]*:[[:space:]]*(.*)$ ]]; then
+                            c_id="${BASH_REMATCH[1]}"
+                            c_id="${c_id#"${c_id%%[![:space:]]*}"}"; c_id="${c_id%"${c_id##*[![:space:]]}"}"
+                            break
+                        fi
+                    done
+                    if [[ -n "$current_key" ]]; then
+                        current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
+                        current_val="${current_val%"${current_val##*[![:space:]]}"}"
+                        if [[ "$current_key" == "__id__" ]]; then t_id="$current_val"
+                        elif [[ "$current_key" == "text" ]]; then t_text="$current_val"
+                        elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                        elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+                        current_key=""
+                    fi
+                    local old_content="$content"
+                    content=""
+                    if declare -F "__block_${child_name}" >/dev/null; then
+                        "__block_${child_name}" "$child_name" child_buffer
+                    else
+                        __block_core "$child_name" child_buffer
+                    fi
+                    [[ -z "$c_id" ]] && c_id="child-${#child_order[@]}-$RANDOM"
+                    child_html["$c_id"]="$content"
+                    child_order+=("$c_id")
+                    content="$old_content"
+                    in_child=""
+                else
+                    child_buffer+=("$b_line")
+                fi
+                continue
+            fi
+            
+            if [[ "$b_line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
+                in_child="1"
+                child_indent="${BASH_REMATCH[1]}"
+                child_name="${BASH_REMATCH[2]}"
+                child_buffer=()
+                if [[ -n "$current_key" ]]; then
+                    current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
+                    current_val="${current_val%"${current_val##*[![:space:]]}"}"
+                    if [[ "$current_key" == "__id__" ]]; then t_id="$current_val"
+                    elif [[ "$current_key" == "text" ]]; then t_text="$current_val"
+                    elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+                    current_key=""
+                fi
+                continue
+            fi
+            
+            if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*end[[:space:]]*: ]]; then
+                if [[ -n "$current_key" ]]; then
+                    current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
+                    current_val="${current_val%"${current_val##*[![:space:]]}"}"
+                    if [[ "$current_key" == "__id__" ]]; then t_id="$current_val"
+                    elif [[ "$current_key" == "text" ]]; then t_text="$current_val"
+                    elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+                    current_key=""
+                fi
+                continue
+            fi
+            
+            if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
+                if [[ -n "$current_key" ]]; then
+                    current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
+                    current_val="${current_val%"${current_val##*[![:space:]]}"}"
+                    if [[ "$current_key" == "__id__" ]]; then t_id="$current_val"
+                    elif [[ "$current_key" == "text" ]]; then t_text="$current_val"
+                    elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+                fi
+                current_key="${BASH_REMATCH[1]}"
+                current_val="${BASH_REMATCH[2]}"
+                current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                current_val="${current_val%"${current_val##*[![:space:]]}"}"
+            else
+                if [[ -n "$current_key" ]]; then
+                    current_val+=$'\n'"$b_line"
+                fi
+            fi
+        done
+        if [[ -n "$current_key" ]]; then
+            current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
+            current_val="${current_val%"${current_val##*[![:space:]]}"}"
+            if [[ "$current_key" == "__id__" ]]; then t_id="$current_val"
+            elif [[ "$current_key" == "text" ]]; then t_text="$current_val"
+            elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+            elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+        fi
+        
+        if type __parse_block_field >/dev/null 2>&1; then
+            t_text="$(__parse_block_field "$t_text")"
+        else
+            t_text="${t_text//$'\n'/<br>}"
+        fi
+        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        local html="<text id=\"block-text-${t_id}\" class=\"block-text\"${style_attr}>"$'\n'
+        html+="    ${t_text}"$'\n'
+        for c_id in "${child_order[@]}"; do
+            html+="${child_html[$c_id]}"$'\n'
+        done
+        html+="</text>"$'\n'
+        content+="${html}"
+    }
+
     __block_hide() {
         if [[ ${#hide_buffer[@]} -eq 0 ]]; then return; fi
-        local h_title="" h_hide=""
+        local h_title="" h_hide="" b_width="" b_style=""
         local current_key="" current_val=""
         local b_line
         for b_line in "${hide_buffer[@]}"; do
@@ -837,6 +996,8 @@ __blocks__() {
                     case "$current_key" in
                         title) h_title="$current_val" ;;
                         hide) h_hide="$current_val" ;;
+                        __width__) b_width="$current_val" ;;
+                        __style__) b_style="$current_val" ;;
                     esac
                 fi
                 current_key="${BASH_REMATCH[1]}"
@@ -853,16 +1014,24 @@ __blocks__() {
             case "$current_key" in
                 title) h_title="$current_val" ;;
                 hide) h_hide="$current_val" ;;
+                __width__) b_width="$current_val" ;;
+                __style__) b_style="$current_val" ;;
             esac
         fi
-        h_hide="$(__parse_multiline "$h_hide")"
+        
+        if type __parse_block_field >/dev/null 2>&1; then
+            h_hide="$(__parse_block_field "$h_hide")"
+        fi
+        
         local temp_line="$line"
         line="$h_title"
         line="${line//&/$_amp}"; line="${line//</$_lt}"; line="${line//>/$_gt}"
         __parse_inline
         h_title="$line"
         line="$temp_line"
-        local html="<details class=\"hide-block\">"$'\n'
+        
+        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        local html="<details class=\"hide-block\"${style_attr}>"$'\n'
         html+="<summary class=\"hide-title\">${h_title}</summary>"$'\n'
         html+="<div class=\"hide-content\">"$'\n'
         html+="${h_hide}"$'\n'
@@ -873,16 +1042,21 @@ __blocks__() {
 
     __block_buttons() {
         local bname="$1"
-        local -n btn_buffer_ref="$2"
-        if [[ ${#btn_buffer_ref[@]} -eq 0 ]]; then return; fi
+        local _ref="$2[@]"
+        local -a my_buffer=("${!_ref}")
+        if [[ ${#my_buffer[@]} -eq 0 ]]; then return; fi
         local b_id="rnd-$RANDOM"
+        local b_width="" b_style=""
         local -a btns=()
         local current_key="" current_val="" b_line
-        for b_line in "${btn_buffer_ref[@]}"; do
+        
+        for b_line in "${my_buffer[@]}"; do
             if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
                 if [[ -n "$current_key" ]]; then
                     if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
-                    elif [[ "$current_key" == "button" ]]; then btns+=("$current_val"); fi
+                    elif [[ "$current_key" == "button" ]]; then btns+=("$current_val")
+                    elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
                 fi
                 current_key="${BASH_REMATCH[1]}"
                 current_val="${BASH_REMATCH[2]}"
@@ -894,13 +1068,18 @@ __blocks__() {
                 fi
             fi
         done
+        
         if [[ -n "$current_key" ]]; then
             if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
-            elif [[ "$current_key" == "button" ]]; then btns+=("$current_val"); fi
+            elif [[ "$current_key" == "button" ]]; then btns+=("$current_val")
+            elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+            elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
         fi
-
-        local html="<buttons id=\"block-card-buttons-${b_id}\" class=\"block-card-buttons\">"$'\n'
+        
+        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        local html="<buttons id=\"block-card-buttons-${b_id}\" class=\"block-card-buttons\"${style_attr}>"$'\n'
         local i=1 btn temp_text temp_url js_click
+        
         for btn in "${btns[@]}"; do
             temp_text=""
             temp_url=""
@@ -928,6 +1107,12 @@ __blocks__() {
                 fi
             fi
             
+            if [[ -z "$temp_text" && -n "$temp_url" ]]; then
+                temp_text="${temp_url##*/}"
+                temp_text="${temp_text%.*}"
+                temp_text="${temp_text//[-_]/ }"
+            fi
+            
             if [[ "$temp_url" == http://* || "$temp_url" == https://* ]]; then
                 js_click="window.open('${temp_url}', '_blank');"
             else
@@ -937,7 +1122,57 @@ __blocks__() {
             html+="    <button id=\"block-card-button-${i}-${b_id}\" class=\"block-card-button-${i}\" href=\"${temp_url}\" onclick=\"${js_click}\">${temp_text}</button>"$'\n'
             ((i++))
         done
+        
         html+="</buttons>"$'\n'
+        content+="${html}"
+    }
+
+    __block_image() {
+        local bname="$1"
+        local -n img_buffer_ref="$2"
+        if [[ ${#img_buffer_ref[@]} -eq 0 ]]; then return; fi
+        local b_id="rnd-$RANDOM"
+        local b_img="" b_alt="" b_cap="" b_width="" b_style=""
+        local current_key="" current_val="" b_line
+        for b_line in "${img_buffer_ref[@]}"; do
+            if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
+                if [[ -n "$current_key" ]]; then
+                    if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
+                    elif [[ "$current_key" == "image" ]]; then b_img="$current_val"
+                    elif [[ "$current_key" == "alt" ]]; then b_alt="$current_val"
+                    elif [[ "$current_key" == "caption" ]]; then b_cap="$current_val"
+                    elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+                fi
+                current_key="${BASH_REMATCH[1]}"
+                current_val="${BASH_REMATCH[2]}"
+                current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                current_val="${current_val%"${current_val##*[![:space:]]}"}"
+            else
+                if [[ -n "$current_key" ]]; then
+                    current_val+=$'\n'"$b_line"
+                fi
+            fi
+        done
+        if [[ -n "$current_key" ]]; then
+            if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
+            elif [[ "$current_key" == "image" ]]; then b_img="$current_val"
+            elif [[ "$current_key" == "alt" ]]; then b_alt="$current_val"
+            elif [[ "$current_key" == "caption" ]]; then b_cap="$current_val"
+            elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+            elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+        fi
+        if [[ -n "$b_img" && "$b_img" != http://* && "$b_img" != https://* && "$b_img" != /* ]]; then
+            b_img="/_static/${b_img}"
+        fi
+        
+        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        local html="<image id=\"block-image-${b_id}\" class=\"block-image\"${style_attr}>"$'\n'
+        html+="    <img src=\"${b_img}\" alt=\"${b_alt}\" class=\"block-image-img\">"$'\n'
+        if [[ -n "$b_cap" ]]; then
+            html+="    <figcaption class=\"block-image-caption\">${b_cap}</figcaption>"$'\n'
+        fi
+        html+="</image>"$'\n'
         content+="${html}"
     }
 
@@ -946,7 +1181,7 @@ __blocks__() {
         local -n card_buffer_ref="$2"
         if [[ ${#card_buffer_ref[@]} -eq 0 ]]; then return; fi
         local b_id="rnd-$RANDOM"
-        local c_cover="" c_text=""
+        local c_cover="" c_text="" b_width="" b_style=""
         local -a btns=()
         local current_key="" current_val="" b_line
         for b_line in "${card_buffer_ref[@]}"; do
@@ -955,7 +1190,9 @@ __blocks__() {
                     if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
                     elif [[ "$current_key" == "cover" ]]; then c_cover="$current_val"
                     elif [[ "$current_key" == "text" ]]; then c_text="$current_val"
-                    elif [[ "$current_key" == "button" ]]; then btns+=("$current_val"); fi
+                    elif [[ "$current_key" == "button" ]]; then btns+=("$current_val")
+                    elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
                 fi
                 current_key="${BASH_REMATCH[1]}"
                 current_val="${BASH_REMATCH[2]}"
@@ -971,10 +1208,13 @@ __blocks__() {
             if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
             elif [[ "$current_key" == "cover" ]]; then c_cover="$current_val"
             elif [[ "$current_key" == "text" ]]; then c_text="$current_val"
-            elif [[ "$current_key" == "button" ]]; then btns+=("$current_val"); fi
+            elif [[ "$current_key" == "button" ]]; then btns+=("$current_val")
+            elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+            elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
         fi
-
-        local html="<card id=\"block-card-${b_id}\" class=\"block-card\">"$'\n'
+        
+        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        local html="<card id=\"block-card-${b_id}\" class=\"block-card\"${style_attr}>"$'\n'
         if [[ -n "$c_cover" ]]; then
             local cover_src="$c_cover"
             if [[ "$cover_src" != http://* && "$cover_src" != https://* && "$cover_src" != /* ]]; then
@@ -985,9 +1225,14 @@ __blocks__() {
             html+="    </cover>"$'\n'
         fi
         if [[ -n "$c_text" ]]; then
+            c_text="${c_text//\\n/$'\n'}"
+            if type __parse_multiline >/dev/null 2>&1; then
+                c_text="$(__parse_multiline "$c_text")"
+            elif type __parse_block_field >/dev/null 2>&1; then
+                c_text="$(__parse_block_field "$c_text")"
+            fi
             html+="    <text id=\"block-card-text-${b_id}\" class=\"block-card-text\">${c_text}</text>"$'\n'
         fi
-
         if [[ ${#btns[@]} -gt 0 ]]; then
             content+="${html}"
             local -a fake_btn_buffer=(":: __id__: ${b_id}")
@@ -1003,54 +1248,22 @@ __blocks__() {
         fi
     }
 
-    __block_text() {
-        local bname="$1"
-        local -n text_buffer_ref="$2"
-        if [[ ${#text_buffer_ref[@]} -eq 0 ]]; then return; fi
-        local b_id="rnd-$RANDOM"
-        local t_text=""
-        local current_key="" current_val="" b_line
-        for b_line in "${text_buffer_ref[@]}"; do
-            if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
-                if [[ -n "$current_key" ]]; then
-                    if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
-                    elif [[ "$current_key" == "text" ]]; then t_text="$current_val"; fi
-                fi
-                current_key="${BASH_REMATCH[1]}"
-                current_val="${BASH_REMATCH[2]}"
-                current_val="${current_val#"${current_val%%[![:space:]]*}"}"
-                current_val="${current_val%"${current_val##*[![:space:]]}"}"
-            else
-                if [[ -n "$current_key" ]]; then
-                    current_val+=$'\n'"$b_line"
-                fi
-            fi
-        done
-        if [[ -n "$current_key" ]]; then
-            if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
-            elif [[ "$current_key" == "text" ]]; then t_text="$current_val"; fi
-        fi
-        
-        local html="<text-block id=\"block-text-${b_id}\" class=\"block-text\">"$'\n'
-        html+="    ${t_text}"$'\n'
-        html+="</text-block>"$'\n'
-        content+="${html}"
-    }
-
     __block_row() {
         local bname="$1"
-        local -n row_buffer_ref="$2"
-        if [[ ${#row_buffer_ref[@]} -eq 0 ]]; then return; fi
+        local _ref="$2[@]"
+        local -a my_buffer=("${!_ref}")
+        if [[ ${#my_buffer[@]} -eq 0 ]]; then return; fi
         local r_id="rnd-$RANDOM"
+        local r_gap="" b_width="" b_style=""
         local -a items=()
         local -A child_html=()
-        local in_child="" child_name=""
+        local in_child="" child_name="" child_indent=""
         local -a child_buffer=()
         local current_key="" current_val="" b_line
         
-        for b_line in "${row_buffer_ref[@]}"; do
+        for b_line in "${my_buffer[@]}"; do
             if [[ -n "$in_child" ]]; then
-                if [[ "$b_line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]]; then
+                if [[ "$b_line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && [[ "${BASH_REMATCH[1]}" == "$child_indent" ]]; then
                     local c_id="" c_line
                     for c_line in "${child_buffer[@]}"; do
                         if [[ "$c_line" =~ ^[[:space:]]*::[[:space:]]*__id__[[:space:]]*:[[:space:]]*(.*)$ ]]; then
@@ -1059,15 +1272,16 @@ __blocks__() {
                             break
                         fi
                     done
-                    
                     if [[ -n "$current_key" ]]; then
-                        current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                        current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
                         current_val="${current_val%"${current_val##*[![:space:]]}"}"
                         if [[ "$current_key" == "__id__" ]]; then r_id="$current_val"
-                        elif [[ "$current_key" == "item" ]]; then items+=("${current_val#*id=}"); fi
+                        elif [[ "$current_key" == "gap" ]]; then r_gap="$current_val"
+                        elif [[ "$current_key" == "item" ]]; then items+=("$current_val")
+                        elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                        elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
                         current_key=""
                     fi
-
                     local old_content="$content"
                     content=""
                     if declare -F "__block_${child_name}" >/dev/null; then
@@ -1075,7 +1289,6 @@ __blocks__() {
                     else
                         __block_core "$child_name" child_buffer
                     fi
-                    
                     if [[ -n "$c_id" ]]; then
                         child_html["$c_id"]="$content"
                     fi
@@ -1089,28 +1302,37 @@ __blocks__() {
             
             if [[ "$b_line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
                 in_child="1"
+                child_indent="${BASH_REMATCH[1]}"
                 child_name="${BASH_REMATCH[2]}"
                 child_buffer=()
                 
                 if [[ -n "$current_key" ]]; then
-                    current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                    current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
                     current_val="${current_val%"${current_val##*[![:space:]]}"}"
                     if [[ "$current_key" == "__id__" ]]; then r_id="$current_val"
-                    elif [[ "$current_key" == "item" ]]; then items+=("${current_val#*id=}"); fi
+                    elif [[ "$current_key" == "gap" ]]; then r_gap="$current_val"
+                    elif [[ "$current_key" == "item" ]]; then items+=("$current_val")
+                    elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
                     current_key=""
                 fi
                 continue
             fi
-
+            
             if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
                 if [[ -n "$current_key" ]]; then
-                    current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                    current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
                     current_val="${current_val%"${current_val##*[![:space:]]}"}"
                     if [[ "$current_key" == "__id__" ]]; then r_id="$current_val"
-                    elif [[ "$current_key" == "item" ]]; then items+=("${current_val#*id=}"); fi
+                    elif [[ "$current_key" == "gap" ]]; then r_gap="$current_val"
+                    elif [[ "$current_key" == "item" ]]; then items+=("$current_val")
+                    elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
                 fi
                 current_key="${BASH_REMATCH[1]}"
                 current_val="${BASH_REMATCH[2]}"
+                current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                current_val="${current_val%"${current_val##*[![:space:]]}"}"
             else
                 if [[ -n "$current_key" ]]; then
                     current_val+=$'\n'"$b_line"
@@ -1119,25 +1341,86 @@ __blocks__() {
         done
         
         if [[ -n "$current_key" ]]; then
-            current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+            current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
             current_val="${current_val%"${current_val##*[![:space:]]}"}"
             if [[ "$current_key" == "__id__" ]]; then r_id="$current_val"
-            elif [[ "$current_key" == "item" ]]; then items+=("${current_val#*id=}"); fi
+            elif [[ "$current_key" == "gap" ]]; then r_gap="$current_val"
+            elif [[ "$current_key" == "item" ]]; then items+=("$current_val")
+            elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+            elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
         fi
-
-        local html="<row id=\"block-row-${r_id}\" class=\"block-row\">"$'\n'
-        html+="    <items id=\"block-row-items-${r_id}\" class=\"block-row-items\">"$'\n'
-        local i=1 it clean_it
+        
+        local items_style=""
+        if [[ -n "$r_gap" ]]; then
+            if [[ "$r_gap" =~ ^[0-9]+$ ]]; then r_gap="${r_gap}px"; fi
+            items_style=" style=\"gap: ${r_gap};\""
+        fi
+        
+        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        local html="<row id=\"block-row-${r_id}\" class=\"block-row\"${style_attr}>"$'\n'
+        html+="    <items id=\"block-row-items-${r_id}\" class=\"block-row-items\"${items_style}>"$'\n'
+        
+        local i=1 it it_id it_pos class_attr inline_child_style child_content
         for it in "${items[@]}"; do
-            clean_it="${it//\"/}"
-            clean_it="${clean_it//\'/}"
-            clean_it="${clean_it%%,*}"
-            clean_it="${clean_it#"${clean_it%%[![:space:]]*}"}"
-            clean_it="${clean_it%"${clean_it##*[![:space:]]}"}"
+            it_id=""
+            it_pos=""
+            if [[ "$it" == *"="* ]]; then
+                local prev_IFS="$IFS"
+                IFS=','
+                local tokens=($it)
+                IFS="$prev_IFS"
+                local token
+                for token in "${tokens[@]}"; do
+                    token="${token#"${token%%[![:space:]]*}"}"
+                    token="${token%"${token##*[![:space:]]}"}"
+                    if [[ "$token" == id=* ]]; then
+                        it_id="${token#id=}"
+                    elif [[ "$token" == pos=* ]]; then
+                        it_pos="${token#pos=}"
+                    fi
+                done
+            else
+                it_id="$it"
+            fi
             
-            html+="        <item id=\"block-row-item-${i}-${r_id}\" class=\"block-row-item-${i}\">"$'\n'
-            if [[ -n "${child_html[$clean_it]:-}" ]]; then
-                html+="${child_html[$clean_it]}"
+            it_id="${it_id//\"/}"
+            it_id="${it_id//\'/}"
+            it_id="${it_id#"${it_id%%[![:space:]]*}"}"
+            it_id="${it_id%"${it_id##*[![:space:]]}"}"
+            
+            it_pos="${it_pos//\"/}"
+            it_pos="${it_pos//\'/}"
+            it_pos="${it_pos#"${it_pos%%[![:space:]]*}"}"
+            it_pos="${it_pos%"${it_pos##*[![:space:]]}"}"
+            
+            class_attr="block-row-item-${i}"
+            inline_child_style=""
+            
+            if [[ -n "$it_pos" ]]; then
+                class_attr+=" pos-${it_pos}"
+                if [[ "$it_pos" == "center" ]]; then inline_child_style=" style=\"display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;\""
+                elif [[ "$it_pos" == "left" ]]; then inline_child_style=" style=\"display: flex; flex-direction: column; justify-content: flex-start; align-items: flex-start; text-align: left;\""
+                elif [[ "$it_pos" == "right" ]]; then inline_child_style=" style=\"display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-end; text-align: right;\""
+                fi
+            fi
+            child_content="${child_html[$it_id]:-}"
+            
+            local img_wrapper="<img id=\"block-image-${it_id}\" class=\"block-image\">"
+            if [[ "$child_content" == *"$img_wrapper"* ]]; then
+                local div_wrapper="<div id=\"block-image-${it_id}\" class=\"block-image-wrapper\">"
+                child_content="${child_content/$img_wrapper/$div_wrapper}"
+                child_content="${child_content/<\/img>/<\/div>}"
+            fi
+            local image_wrapper="<image id=\"block-image-${it_id}\" class=\"block-image\">"
+            if [[ "$child_content" == *"$image_wrapper"* ]]; then
+                local div_wrapper="<div id=\"block-image-${it_id}\" class=\"block-image-wrapper\">"
+                child_content="${child_content/$image_wrapper/$div_wrapper}"
+                child_content="${child_content/<\/image>/<\/div>}"
+            fi
+            
+            html+="        <item id=\"block-row-item-${i}-${r_id}\" class=\"${class_attr}\" data-pos=\"${it_pos}\"${inline_child_style}>"$'\n'
+            if [[ -n "$child_content" ]]; then
+                html+="${child_content}"
             fi
             html+="        </item>"$'\n'
             ((i++))
@@ -1145,6 +1428,317 @@ __blocks__() {
         html+="    </items>"$'\n'
         html+="</row>"$'\n'
         content+="${html}"
-    }
+    }  
 
+    __block_carousel() {
+        local bname="$1"
+        local _ref="$2[@]"
+        local -a my_buffer=("${!_ref}")
+        if [[ ${#my_buffer[@]} -eq 0 ]]; then return; fi
+        local c_id="rnd-$RANDOM"
+        local c_items="1" b_width="" b_style=""
+        local -a items=()
+        local -A child_html=()
+        local in_child="" child_name=""
+        local -a child_buffer=()
+        local current_key="" current_val="" b_line
+        
+        for b_line in "${my_buffer[@]}"; do
+            if [[ -n "$in_child" ]]; then
+                if [[ "$b_line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]]; then
+                    local c_id_item="" c_line
+                    for c_line in "${child_buffer[@]}"; do
+                        if [[ "$c_line" =~ ^[[:space:]]*::[[:space:]]*__id__[[:space:]]*:[[:space:]]*(.*)$ ]]; then
+                            c_id_item="${BASH_REMATCH[1]}"
+                            c_id_item="${c_id_item#"${c_id_item%%[![:space:]]*}"}"
+                            c_id_item="${c_id_item%"${c_id_item##*[![:space:]]}"}"
+                            break
+                        fi
+                    done
+                    if [[ -n "$current_key" ]]; then
+                        current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
+                        current_val="${current_val%"${current_val##*[![:space:]]}"}"
+                        if [[ "$current_key" == "__id__" ]]; then c_id="$current_val"
+                        elif [[ "$current_key" == "item" ]]; then items+=("${current_val#*id=}")
+                        elif [[ "$current_key" == "items" ]]; then c_items="$current_val"
+                        elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                        elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+                        current_key=""
+                    fi
+                    local old_content="$content"
+                    content=""
+                    if declare -F "__block_${child_name}" >/dev/null; then
+                        "__block_${child_name}" "$child_name" child_buffer
+                    else
+                        __block_core "$child_name" child_buffer
+                    fi
+                    if [[ -n "$c_id_item" ]]; then
+                        child_html["$c_id_item"]="$content"
+                    fi
+                    content="$old_content"
+                    in_child=""
+                else
+                    child_buffer+=("$b_line")
+                fi
+                continue
+            fi
+            
+            if [[ "$b_line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
+                in_child="1"
+                child_name="${BASH_REMATCH[2]}"
+                child_buffer=()
+                if [[ -n "$current_key" ]]; then
+                    current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
+                    current_val="${current_val%"${current_val##*[![:space:]]}"}"
+                    if [[ "$current_key" == "__id__" ]]; then c_id="$current_val"
+                    elif [[ "$current_key" == "item" ]]; then items+=("${current_val#*id=}")
+                    elif [[ "$current_key" == "items" ]]; then c_items="$current_val"
+                    elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+                    current_key=""
+                fi
+                continue
+            fi
+            
+            if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
+                if [[ -n "$current_key" ]]; then
+                    current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
+                    current_val="${current_val%"${current_val##*[![:space:]]}"}"
+                    if [[ "$current_key" == "__id__" ]]; then c_id="$current_val"
+                    elif [[ "$current_key" == "item" ]]; then items+=("${current_val#*id=}")
+                    elif [[ "$current_key" == "items" ]]; then c_items="$current_val"
+                    elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+                fi
+                current_key="${BASH_REMATCH[1]}"
+                current_val="${BASH_REMATCH[2]}"
+                current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                current_val="${current_val%"${current_val##*[![:space:]]}"}"
+            else
+                if [[ -n "$current_key" ]]; then
+                    current_val+=$'\n'"$b_line"
+                fi
+            fi
+        done
+        
+        if [[ -n "$current_key" ]]; then
+            current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
+            current_val="${current_val%"${current_val##*[![:space:]]}"}"
+            if [[ "$current_key" == "__id__" ]]; then c_id="$current_val"
+            elif [[ "$current_key" == "item" ]]; then items+=("${current_val#*id=}")
+            elif [[ "$current_key" == "items" ]]; then c_items="$current_val"
+            elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+            elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+        fi
+        
+        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        local html="<carousel id=\"block-carousel-${c_id}\" class=\"block-carousel\" data-items=\"${c_items}\"${style_attr}>"$'\n'
+        html+="    <div class=\"carousel-wrapper\">"$'\n'
+        html+="        <button class=\"carousel-btn-prev\">Prev</button>"$'\n'
+        html+="        <slides id=\"block-carousel-slides-${c_id}\" class=\"block-carousel-slides\">"$'\n'
+        
+        local i=1 it clean_it display_style
+        for it in "${items[@]}"; do
+            clean_it="${it//\"/}"
+            clean_it="${clean_it//\'/}"
+            clean_it="${clean_it%%,*}"
+            clean_it="${clean_it#"${clean_it%%[![:space:]]*}"}"
+            clean_it="${clean_it%"${clean_it##*[![:space:]]}"}"
+            display_style=""
+            [[ $i -gt $c_items ]] && display_style=" style=\"display: none;\""
+            
+            html+="            <slide id=\"block-carousel-slide-${i}-${c_id}\" class=\"block-carousel-slide\"${display_style}>"$'\n'
+            if [[ -n "${child_html[$clean_it]:-}" ]]; then
+                html+="${child_html[$clean_it]}"
+            fi
+            html+="            </slide>"$'\n'
+            ((i++))
+        done
+        html+="        </slides>"$'\n'
+        html+="        <button class=\"carousel-btn-next\">Next</button>"$'\n'
+        html+="    </div>"$'\n'
+        html+="    <nav class=\"carousel-dots\">"$'\n'
+        local j active_class dots_count
+        dots_count=$(( (${#items[@]} + c_items - 1) / c_items ))
+        for ((j=0; j<dots_count; j++)); do
+            active_class=""
+            [[ $j -eq 0 ]] && active_class=" active"
+            html+="        <button class=\"carousel-dot${active_class}\" data-index=\"${j}\"></button>"$'\n'
+        done
+        html+="    </nav>"$'\n'
+        html+="</carousel>"$'\n'
+        content+="${html}"
+    }   
+
+    __block_grid() {
+        local bname="$1"
+        local _ref="$2[@]"
+        local -a my_buffer=("${!_ref}")
+        if [[ ${#my_buffer[@]} -eq 0 ]]; then return; fi
+        local g_id="rnd-$RANDOM"
+        local g_gap="" b_width="" b_style=""
+        local -a grid_rows=()
+        local -A grid_child_html=()
+        local grid_in_child="" grid_child_name="" grid_child_indent=""
+        local -a grid_child_buffer=()
+        local current_key="" current_val="" b_line
+        
+        for b_line in "${my_buffer[@]}"; do
+            if [[ -n "$grid_in_child" ]]; then
+                if [[ "$b_line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && [[ "${BASH_REMATCH[1]}" == "$grid_child_indent" ]]; then
+                    local c_id="" c_line
+                    for c_line in "${grid_child_buffer[@]}"; do
+                        if [[ "$c_line" =~ ^[[:space:]]*::[[:space:]]*__id__[[:space:]]*:[[:space:]]*(.*)$ ]]; then
+                            c_id="${BASH_REMATCH[1]}"
+                            c_id="${c_id#"${c_id%%[![:space:]]*}"}"; c_id="${c_id%"${c_id##*[![:space:]]}"}"
+                            break
+                        fi
+                    done
+                    if [[ -n "$current_key" ]]; then
+                        current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
+                        current_val="${current_val%"${current_val##*[![:space:]]}"}"
+                        if [[ "$current_key" == "__id__" ]]; then g_id="$current_val"
+                        elif [[ "$current_key" == "gap" ]]; then g_gap="$current_val"
+                        elif [[ "$current_key" == "row" ]]; then grid_rows+=("$current_val")
+                        elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                        elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+                        current_key=""
+                    fi
+                    local old_content="$content"
+                    content=""
+                    if declare -F "__block_${grid_child_name}" >/dev/null; then
+                        "__block_${grid_child_name}" "$grid_child_name" grid_child_buffer
+                    else
+                        __block_core "$grid_child_name" grid_child_buffer
+                    fi
+                    if [[ -n "$c_id" ]]; then
+                        grid_child_html["$c_id"]="$content"
+                    fi
+                    content="$old_content"
+                    grid_in_child=""
+                else
+                    grid_child_buffer+=("$b_line")
+                fi
+                continue
+            fi
+            
+            if [[ "$b_line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
+                grid_in_child="1"
+                grid_child_indent="${BASH_REMATCH[1]}"
+                grid_child_name="${BASH_REMATCH[2]}"
+                grid_child_buffer=()
+                if [[ -n "$current_key" ]]; then
+                    current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
+                    current_val="${current_val%"${current_val##*[![:space:]]}"}"
+                    if [[ "$current_key" == "__id__" ]]; then g_id="$current_val"
+                    elif [[ "$current_key" == "gap" ]]; then g_gap="$current_val"
+                    elif [[ "$current_key" == "row" ]]; then grid_rows+=("$current_val")
+                    elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+                    current_key=""
+                fi
+                continue
+            fi
+            
+            if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
+                if [[ -n "$current_key" ]]; then
+                    current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
+                    current_val="${current_val%"${current_val##*[![:space:]]}"}"
+                    if [[ "$current_key" == "__id__" ]]; then g_id="$current_val"
+                    elif [[ "$current_key" == "gap" ]]; then g_gap="$current_val"
+                    elif [[ "$current_key" == "row" ]]; then grid_rows+=("$current_val")
+                    elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+                fi
+                current_key="${BASH_REMATCH[1]}"
+                current_val="${BASH_REMATCH[2]}"
+                current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                current_val="${current_val%"${current_val##*[![:space:]]}"}"
+            else
+                if [[ -n "$current_key" ]]; then
+                    current_val+=$'\n'"$b_line"
+                fi
+            fi
+        done
+        
+        if [[ -n "$current_key" ]]; then
+            current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
+            current_val="${current_val%"${current_val##*[![:space:]]}"}"
+            if [[ "$current_key" == "__id__" ]]; then g_id="$current_val"
+            elif [[ "$current_key" == "gap" ]]; then g_gap="$current_val"
+            elif [[ "$current_key" == "row" ]]; then grid_rows+=("$current_val")
+            elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+            elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+        fi
+        
+        local rows_style=""
+        if [[ -n "$g_gap" ]]; then
+            if [[ "$g_gap" =~ ^[0-9]+$ ]]; then g_gap="${g_gap}px"; fi
+            rows_style=" style=\"gap: ${g_gap};\""
+        fi
+        
+        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        local html="<grid id=\"block-grid-${g_id}\" class=\"block-grid\"${style_attr}>"$'\n'
+        html+="    <rows id=\"block-grid-rows-${g_id}\" class=\"block-grid-rows\"${rows_style}>"$'\n'
+        
+        local r r_id r_pos class_attr inline_child_style
+        for r in "${grid_rows[@]}"; do
+            r_id=""
+            r_pos=""
+            if [[ "$r" == *"="* ]]; then
+                local prev_IFS="$IFS"
+                IFS=','
+                local tokens=($r)
+                IFS="$prev_IFS"
+                local token
+                for token in "${tokens[@]}"; do
+                    token="${token#"${token%%[![:space:]]*}"}"
+                    token="${token%"${token##*[![:space:]]}"}"
+                    if [[ "$token" == id=* ]]; then
+                        r_id="${token#id=}"
+                    elif [[ "$token" == pos=* ]]; then
+                        r_pos="${token#pos=}"
+                    fi
+                done
+            else
+                r_id="$r"
+            fi
+            
+            r_id="${r_id//\"/}"
+            r_id="${r_id//\'/}"
+            r_id="${r_id#"${r_id%%[![:space:]]*}"}"
+            r_id="${r_id%"${r_id##*[![:space:]]}"}"
+            
+            r_pos="${r_pos//\"/}"
+            r_pos="${r_pos//\'/}"
+            r_pos="${r_pos#"${r_pos%%[![:space:]]*}"}"
+            r_pos="${r_pos%"${r_pos##*[![:space:]]}"}"
+            
+            class_attr="block-grid-row"
+            inline_child_style=""
+            
+            if [[ -n "$r_pos" ]]; then
+                class_attr+=" pos-${r_pos}"
+                if [[ "$r_pos" == "center" ]]; then inline_child_style=" style=\"display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;\""
+                elif [[ "$r_pos" == "left" ]]; then inline_child_style=" style=\"display: flex; flex-direction: column; justify-content: flex-start; align-items: flex-start; text-align: left;\""
+                elif [[ "$r_pos" == "right" ]]; then inline_child_style=" style=\"display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-end; text-align: right;\""
+                fi
+            fi
+            
+            local child_content="${grid_child_html[$r_id]:-}"
+            local target_tag="<row id=\"block-row-${r_id}\" class=\"block-row\">"
+            
+            if [[ "$child_content" == *"$target_tag"* ]]; then
+                local new_tag="<row id=\"block-grid-row-${r_id}\" class=\"block-row ${class_attr}\" data-pos=\"${r_pos}\"${inline_child_style}>"
+                html+="${child_content/$target_tag/$new_tag}"
+            else
+                html+="        <row id=\"block-grid-row-${r_id}\" class=\"${class_attr}\" data-pos=\"${r_pos}\"${inline_child_style}>"$'\n'
+                html+="${child_content}"
+                html+="        </row>"$'\n'
+            fi
+        done
+        html+="    </rows>"$'\n'
+        html+="</grid>"$'\n'
+        content+="${html}"
+    }    
 }

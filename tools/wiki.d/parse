@@ -231,8 +231,8 @@ __parse__() {
         if [[ "$line" != *"\`"* && "$line" != *"*"* && "$line" != *"_"* && "$line" != *"+"* && "$line" != *"{"* && "$line" != *"["* && "$line" != *"<"* && "$line" != *"=="* ]]; then return; fi
         local -a masked_codes=()
         local m_idx=0
-
         __parse_pre
+        __parse_inline
         __parse_strong
         __parse_underline
         __parse_em
@@ -244,13 +244,12 @@ __parse__() {
         done
     }
 
+
     __parse_block_field() {
         local _field_ref="$1"
         if [[ -z "$_field_ref" ]]; then return; fi
-                 
         _field_ref="${_field_ref//$'\t'/    }"
         _field_ref="${_field_ref//$'\xC2\xA0'/ }"
-                 
         local tmp
         while [[ "$_field_ref" != "$tmp" ]]; do
             tmp="$_field_ref"
@@ -260,7 +259,6 @@ __parse__() {
             _field_ref="${_field_ref%$'\r'}"
             _field_ref="${_field_ref% }"
         done
-                 
         local base_indent=-1
         local check_line
         while IFS= read -r check_line; do
@@ -272,7 +270,6 @@ __parse__() {
                 fi
             fi
         done <<< "$_field_ref"
-                 
         if (( base_indent > 0 )); then
             local stripped=""
             local l
@@ -285,12 +282,10 @@ __parse__() {
             done <<< "$_field_ref"
             _field_ref="${stripped%$'\n'}"
         fi
-                 
         local out=""
         local in_inner=0 in_html_pre=0 list_depth=0 code_lang=""
         local prefix rest inner suffix
         local -a LIST_INDENTS=() LIST_TYPES=()
-                 
         while IFS= read -r l || [[ -n "$l" ]]; do
             if (( in_inner == 0 )); then
                 if [[ "$l" =~ ^[[:space:]]*\`\`\`([a-zA-Z0-9_+-]*)[[:space:]]*$ ]]; then
@@ -333,7 +328,6 @@ __parse__() {
                             fi
                         fi
                     fi
-                                         
                     while [[ "$l" == *\*\**\*\** ]]; do
                         prefix="${l%%\*\**}"; rest="${l#*\*\*}"
                         inner="${rest%%\*\**}"; suffix="${rest#*\*\*}"
@@ -347,7 +341,7 @@ __parse__() {
                     while [[ "$l" == *\`*\`* ]]; do
                         prefix="${l%%\`*}"; rest="${l#*\`}"
                         inner="${rest%%\`*}"; suffix="${rest#*\`}"
-                        l="${prefix}<code>${inner}</code>${suffix}"
+                        l="${prefix}<inline>${inner}</inline>${suffix}"
                     done
                     while [[ "$l" == *"++"*"++"* ]]; do
                         local old_l="$l"
@@ -373,7 +367,6 @@ __parse__() {
                             if [[ "$l" == "$old_l" ]]; then break; fi
                         done
                     fi
-                                         
                     if [[ "$l" == *"["* && "$l" == *"]("* ]]; then
                         local link_re='\[([^]]+)\]\(([^)]+)\)'
                         while [[ "$l" =~ $link_re ]]; do
@@ -386,11 +379,16 @@ __parse__() {
                             l="${l/"$full"/<a href=\"${l_href}\">${l_text}</a>}"
                         done
                     fi
-                                         
+                    
+                    local temp_line="$line"
+                    line="$l"
+                    __parse_refs
+                    l="$line"
+                    line="$temp_line"
+
                     if (( is_list == 1 )); then
                         local ltype="ul"
                         [[ "$marker" =~ ^[0-9] ]] && ltype="ol"
-                                                 
                         if (( list_depth == 0 )) || (( indent > LIST_INDENTS[list_depth-1] )); then
                             LIST_INDENTS[$list_depth]="$indent"
                             LIST_TYPES[$list_depth]="$ltype"
@@ -401,7 +399,6 @@ __parse__() {
                                 list_depth=$((list_depth - 1))
                                 out+="</li></${LIST_TYPES[list_depth]}>"
                             done
-                                                         
                             if (( list_depth == 0 )); then
                                 LIST_INDENTS[$list_depth]="$indent"
                                 LIST_TYPES[$list_depth]="$ltype"
@@ -428,7 +425,6 @@ __parse__() {
                 fi
             fi
         done <<< "$_field_ref"
-                 
         if (( list_depth > 0 )); then
             while (( list_depth > 0 )); do
                 list_depth=$((list_depth - 1))
@@ -437,7 +433,6 @@ __parse__() {
             LIST_INDENTS=()
             LIST_TYPES=()
         fi
-                 
         printf "%s" "$out"
     }
 

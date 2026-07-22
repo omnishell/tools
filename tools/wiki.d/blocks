@@ -5,10 +5,8 @@ __blocks__() {
     __block_core() {
         local bname="$1"
         local -n buffer_ref="$2"
-                 
         local -a BLOCK_KEYS=()
         local -A BLOCK_VALS=()
-                 
         local current_key="" current_val="" b_line
         for b_line in "${buffer_ref[@]}"; do
             if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
@@ -30,7 +28,6 @@ __blocks__() {
             BLOCK_VALS["$current_key"]="$current_val"
             BLOCK_KEYS+=("$current_key")
         fi
-                 
         local -A BLOCK_DISPLAY_KEYS=()
         local -A BLOCK_DISPLAY_VALS=()
         local k
@@ -44,7 +41,6 @@ __blocks__() {
         fi
         local block_entry="${BLOCK_VALS[__entry__]:-}"
         local block_context="${BLOCK_VALS[__context__]:-}"
-                 
         local first_content_key="" first_content_val=""
         if [[ -n "${BLOCK_VALS[term]:-}" ]]; then
             first_content_key="term"
@@ -61,7 +57,6 @@ __blocks__() {
                 fi
             done
         fi
-                 
         local raw_id="${BLOCK_VALS[__id__]:-}"
         if [[ -z "$raw_id" ]]; then
             raw_id="${block_entry:-${first_content_val}}"
@@ -69,27 +64,21 @@ __blocks__() {
         if [[ -z "$raw_id" && ${#BLOCK_KEYS[@]} -gt 0 ]]; then
             raw_id="${BLOCK_VALS[${BLOCK_KEYS[0]}]}"
         fi
-                 
         local clean_id="$(__slugify "$raw_id")"
         [[ -z "$clean_id" ]] && clean_id="rnd-$RANDOM"
-                 
         local ref_key="$clean_id"
         if [[ -n "$block_context" && "$raw_id" != *.* ]]; then
             ref_key="$(__slugify "${block_context}.${raw_id}")"
         fi
-                 
         local anchor_id_slug="${ref_key//./-}"
         local anchor_id="block-${bname}-${anchor_id_slug}"
-                 
         local BLOCK_ID="$clean_id"
         local BLOCK_TITLE="${block_entry:-${first_content_val:-$raw_id}}"
-                 
         if [[ $SKIP_DEFAULT_REFS -eq 0 && -n "$w_name" ]]; then
             declare -p WIKI_REFS >/dev/null 2>&1 || declare -g -A WIKI_REFS=()
             WIKI_REFS["${bname}::${ref_key}"]="${pagename}:${anchor_id}"
             WIKI_REFS["${w_name}::${ENV:-}::${bname}::${ref_key}"]="${pagename}:${anchor_id}"
         fi
-                 
         if [[ -n "${BLOCK_VALS[__context__]:-}" ]]; then
             local first_dk=""
             for k in "${BLOCK_KEYS[@]}"; do
@@ -102,31 +91,22 @@ __blocks__() {
                 BLOCK_DISPLAY_VALS["$first_dk"]+=" <em class=\"def-context\">(${BLOCK_VALS[__context__]})</em>"
             fi
         fi
-                 
         local html="<block id=\"${anchor_id}\" class=\"block-${bname}\">"$'\n'
         html+="    <fields id=\"fields-${bname}-${anchor_id_slug}\" class=\"fields-${bname}\">"$'\n'
-                 
         local json_str="{\"url\":\"$(__json_escape "/${pagename//./\/}.html#${anchor_id}")\""
-                 
         if [[ -n "${BLOCK_VALS[__context__]:-}" ]]; then
             json_str+=",\"__context__\":\"$(__json_escape "${BLOCK_VALS[__context__]}")\""
         fi
-                 
         for k in "${BLOCK_KEYS[@]}"; do
             [[ "$k" == "__id__" || "$k" == "__context__" || "$k" == "__entry__" ]] && continue
-                         
             local v="${BLOCK_VALS[$k]}"
             json_str+=",\"${k}\":\"$(__json_escape "$v")\""
-                         
             local dk="${BLOCK_DISPLAY_KEYS[$k]:-}"
             [[ -z "$dk" ]] && continue
-                         
             local dv="${BLOCK_DISPLAY_VALS[$k]}"
-                         
             if [[ "$k" == "__refs__" || "$dk" == "__refs__" ]]; then
                 local prefix_name="refs"
                 [[ "$k" != "__refs__" ]] && prefix_name="$k"
-                                 
                 local rel_out="<ul>"$'\n'
                 local OIFS="$IFS"; IFS=','
                 local r_items=($dv)
@@ -138,7 +118,7 @@ __blocks__() {
                         local r_topic="${r_item%%.*}"
                         local r_ref="${r_item#*.}"
                         line="{{${r_topic}:${r_ref}:${r_ref}}}"
-                        __parse_inline
+                        __parse_refs
                         rel_out+="        <li>$line</li>"$'\n'
                     fi
                 done
@@ -149,24 +129,18 @@ __blocks__() {
             elif [[ "${BLOCK_VALS[$k]}" == "$dv" ]]; then
                 dv="$(__parse_block_field "$dv")"
             fi
-                         
             html+="        <field id=\"field-${bname}-${dk}-${anchor_id_slug}\" class=\"field-${bname}-${dk}\">"$'\n'
             html+="            <prefix id=\"prefix-${bname}-${dk}-${anchor_id_slug}\" class=\"prefix-${bname}-${dk}\">${dk}: </prefix><div id=\"text-${bname}-${dk}-${anchor_id_slug}\" class=\"text-prefix-${bname}-${dk}\">${dv}</div>"$'\n'
             html+="        </field>"$'\n'
         done
-                 
         html+="    </fields>"$'\n'
         html+="</block>"$'\n'
         json_str+="}"
-                 
         SEARCH_INDEX_MAP["$bname"]+="${json_str},"$'\n'
-                 
         if [[ -z "${BLOCK_TITLE_KEYS[$bname]:-}" ]]; then
             BLOCK_TITLE_KEYS["$bname"]="${first_content_key:-${BLOCK_KEYS[0]}}"
         fi
-                 
         LIST_HTML_MAP["$bname"]+="<li><a href=\"#${anchor_id}\">${BLOCK_TITLE}</a></li>"$'\n'
-                 
         content+="${html}"
     }
     

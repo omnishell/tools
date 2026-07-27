@@ -67,7 +67,16 @@ __parse__() {
                 local rest="${temp_line#*$before_pre}"
                 local full_pre="${rest%%</pre>*}</pre>"
                 local old_line="$temp_line"
-                masked_codes[$m_idx]="$full_pre"
+                
+                local open_tag="${full_pre%%>*}"
+                local inner_content="${full_pre#*>}"
+                inner_content="${inner_content%</pre>*}"
+                
+                inner_content="${inner_content//&/$_amp}"
+                inner_content="${inner_content//</$_lt}"
+                inner_content="${inner_content//>/$_gt}"
+                
+                masked_codes[$m_idx]="${open_tag}>${inner_content}</pre>"
                 temp_line="${temp_line/"$full_pre"/%%MASKED_${m_idx}%%}"
                 ((m_idx++))
                 if [[ "$temp_line" == "$old_line" ]]; then break; fi
@@ -137,36 +146,8 @@ __parse__() {
                 else
                     ref_key="${raw_ref//[^a-zA-Z0-9_.-]/}"
                 fi
-                local key="${topic}::${ref_key}"
-                local target="${WIKI_REFS[$key]:-}"
-                if [[ -z "$target" && -n "$w_name" ]]; then
-                    target="${WIKI_REFS[${w_name}::${ENV:-}::${key}]:-}"
-                fi
-                if [[ -z "$target" ]]; then
-                    local clean_key="${key//[^a-zA-Z0-9_.:-]/}"
-                    local k
-                    for k in "${!WIKI_REFS[@]}"; do
-                        local clean_k="${k//[^a-zA-Z0-9_.:-]/}"
-                        if [[ "$clean_k" == "$clean_key" || "$clean_k" == *"::${clean_key}" ]]; then
-                            target="${WIKI_REFS[$k]}"
-                            break
-                        fi
-                    done
-                fi
                 local old_line="$line"
-                if [[ -z "$target" ]]; then
-                    line="${line/"$full"/<span class=\"wiki-ref-err\">${label}</span>}"
-                else
-                    local href=""
-                    if [[ "$target" == http://* || "$target" == https://* ]]; then href="$target"
-                    else
-                        local internal_path="${target%:*}" marker="${target##*:}"
-                        [[ "$target" != *":"* ]] && marker=""
-                        internal_path="${internal_path//./\/}"; href="/${internal_path}.html"
-                        [[ -n "$marker" ]] && href="${href}#${marker}"
-                    fi
-                    line="${line/"$full"/<a class=\"wiki-topic-${topic}\" href=\"${href}\">${label}</a>}"
-                fi
+                line="${line/"$full"/%%WIKI_REF:${topic}:${ref_key}:${label}%%}"
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
@@ -186,7 +167,7 @@ __parse__() {
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
-    }
+    } 
 
     __parse_links() {
         if [[ "$line" == *"["* && "$line" == *"]("* ]]; then
@@ -463,13 +444,36 @@ __parse__() {
     __parse_html() {
         if [[ -n "$in_custom_block" ]]; then return 1; fi
         if (( in_html_pre == 1 )); then
-            if [[ "$line" == *"</pre>"* ]]; then in_html_pre=0; fi
-            content+="${line}"$'\n'
+            if [[ "$line" == *"</pre>"* ]]; then
+                in_html_pre=0
+                local before_close="${line%%</pre>*}"
+                local after_close="${line#*</pre>}"
+                
+                before_close="${before_close//&/$_amp}"
+                before_close="${before_close//</$_lt}"
+                before_close="${before_close//>/$_gt}"
+                
+                content+="${before_close}</pre>${after_close}"$'\n'
+            else
+                local safe_line="$line"
+                safe_line="${safe_line//&/$_amp}"
+                safe_line="${safe_line//</$_lt}"
+                safe_line="${safe_line//>/$_gt}"
+                
+                content+="${safe_line}"$'\n'
+            fi
             return 0
         fi
         if [[ "$line" == *"<pre"* && "$line" != *"</pre>"* ]]; then
             in_html_pre=1
-            content+="${line}"$'\n'
+            local open_tag="${line%%>*}"
+            local after_open="${line#*>}"
+            
+            after_open="${after_open//&/$_amp}"
+            after_open="${after_open//</$_lt}"
+            after_open="${after_open//>/$_gt}"
+            
+            content+="${open_tag}>${after_open}"$'\n'
             return 0
         fi
         return 1

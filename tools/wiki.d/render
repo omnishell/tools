@@ -180,7 +180,44 @@ __render__() {
         __render_listings
         __search_index
         __render_layout
+        local ref_re='%%WIKI_REF:([^:]+):([^:]+):([^%]+)%%'
+        while [[ "$rendered" =~ $ref_re ]]; do
+            local full="${BASH_REMATCH[0]}"
+            local topic="${BASH_REMATCH[1]}"
+            local ref_key="${BASH_REMATCH[2]}"
+            local label="${BASH_REMATCH[3]}"
+            local key="${topic}::${ref_key}"
+            local target="${WIKI_REFS[$key]:-}"
+            if [[ -z "$target" && -n "$w_name" ]]; then
+                target="${WIKI_REFS[${w_name}::${ENV:-}::${key}]:-}"
+            fi
+            if [[ -z "$target" ]]; then
+                local clean_key="${key//[^a-zA-Z0-9_.:-]/}"
+                local k
+                for k in "${!WIKI_REFS[@]}"; do
+                    local clean_k="${k//[^a-zA-Z0-9_.:-]/}"
+                    if [[ "$clean_k" == "$clean_key" || "$clean_k" == *"::${clean_key}" ]]; then
+                        target="${WIKI_REFS[$k]}"
+                        break
+                    fi
+                done
+            fi
+            if [[ -z "$target" ]]; then
+                rendered="${rendered//"$full"/<span class=\"wiki-ref-err\">${label}</span>}"
+            else
+                local href=""
+                if [[ "$target" == http://* || "$target" == https://* ]]; then href="$target"
+                else
+                    local internal_path="${target%:*}" marker="${target##*:}"
+                    [[ "$target" != *":"* ]] && marker=""
+                    internal_path="${internal_path//./\/}"; href="/${internal_path}.html"
+                    [[ -n "$marker" ]] && href="${href}#${marker}"
+                fi
+                rendered="${rendered//"$full"/<a class=\"wiki-topic-${topic}\" href=\"${href}\">${label}</a>}"
+            fi
+        done
         printf "%s" "$rendered" > "$out_path"
         __log "Rendered -> $out_path" -t success -l wiki
-    } 
+    }
+
 }

@@ -25,6 +25,28 @@ __build__() {
             if [[ -f "$file" ]]; then
                 fm_title="$(__fm_val "$file" "title" || true)"
                 fm_weight="$(__fm_val "$file" "weight" || true)"
+                
+                local in_globals=0 g_line
+                while IFS= read -r g_line || [[ -n "$g_line" ]]; do
+                    g_line="${g_line%$'\r'}"
+                    if (( in_globals == 0 )); then
+                        [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals=1
+                    else
+                        [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
+                        if [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*title:[[:space:]]*(.*)$ ]]; then
+                            local temp_title="${BASH_REMATCH[1]}"
+                            temp_title="${temp_title#"${temp_title%%[![:space:]]*}"}"
+                            temp_title="${temp_title%"${temp_title##*[![:space:]]}"}"
+                            [[ -n "$temp_title" ]] && fm_title="$temp_title"
+                        elif [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*(weight|weighted):[[:space:]]*(.*)$ ]]; then
+                            local temp_weight="${BASH_REMATCH[2]}"
+                            temp_weight="${temp_weight#"${temp_weight%%[![:space:]]*}"}"
+                            temp_weight="${temp_weight%"${temp_weight##*[![:space:]]}"}"
+                            [[ -n "$temp_weight" ]] && fm_weight="$temp_weight"
+                        fi
+                    fi
+                done < "$file"
+                
                 [[ -z "$fm_weight" ]] && fm_weight="0"
             fi
             PAGE_TITLES["$p"]="$fm_title"
@@ -36,7 +58,7 @@ __build__() {
             else _global_pages+=("${parts[0]}"); fi
         done
     }
-
+    
     __build_cache() {
         mkdir -p "$cache_dir" 2>/dev/null
         local tmpl_hash=""

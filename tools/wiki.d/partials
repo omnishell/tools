@@ -2,30 +2,83 @@
 
 __partials__() {
     __partial_menu() {
-        __log "Building Featured Menu..." -t info -l wiki
         local -a _featured_list=()
         if declare -p WIKI_FEATURED >/dev/null 2>&1; then
             if [[ "$(declare -p WIKI_FEATURED)" == "declare -a"* ]]; then _featured_list=("${WIKI_FEATURED[@]}")
             else read -ra _featured_list <<< "$WIKI_FEATURED"; fi
         else _featured_list=("${_global_pages[@]}"); fi
-        if [ ${#_featured_list[@]} -gt 0 ]; then
+        
+        local -A feat_title=() feat_weight=() feat_url=()
+        local -a resolved_list=()
+        local fpage
+        
+        for fpage in "${_featured_list[@]}"; do
+            local w="" t="" url=""
+            
+            if [[ -n "${PAGE_TITLES[$fpage]:-}" || -n "${PAGE_WEIGHTS[$fpage]:-}" ]]; then
+                w="${PAGE_WEIGHTS[$fpage]:-9999}"
+                t="${PAGE_TITLES[$fpage]:-}"
+                url="/${fpage//./\/}.html"
+            elif [[ -n "${PAGE_TITLES[${fpage}.index]:-}" || -n "${PAGE_WEIGHTS[${fpage}.index]:-}" ]]; then
+                w="${PAGE_WEIGHTS[${fpage}.index]:-9999}"
+                t="${PAGE_TITLES[${fpage}.index]:-}"
+                url="/${fpage//./\/}/index.html"
+            else
+                local best_page="" best_weight=9999999 cp
+                for cp in "${_pages[@]}"; do
+                    if [[ "$cp" == "$fpage" || "$cp" == "${fpage}."* ]]; then
+                        local cw="${PAGE_WEIGHTS[$cp]:-9999999}"
+                        if (( cw < best_weight )); then
+                            best_weight=$cw
+                            best_page=$cp
+                        elif (( cw == best_weight )); then
+                            if [[ -z "$best_page" || "$cp" < "$best_page" ]]; then
+                                best_page=$cp
+                            fi
+                        fi
+                    fi
+                done
+                
+                if [[ -n "$best_page" ]]; then
+                    w="${PAGE_WEIGHTS[$best_page]:-9999}"
+                    t="${PAGE_TITLES[$best_page]:-}"
+                    url="/${best_page//./\/}.html"
+                else
+                    w=9999
+                    t="${fpage##*.}"
+                    t="${t^}"
+                    url="/${fpage//./\/}.html"
+                fi
+            fi
+            
+            [[ -z "$t" ]] && { t="${fpage##*.}"; t="${t^}"; }
+            
+            feat_title["$fpage"]="$t"
+            feat_weight["$fpage"]="$w"
+            feat_url["$fpage"]="$url"
+            
+            local exists=0 r
+            for r in "${resolved_list[@]}"; do
+                [[ "$r" == "$fpage" ]] && { exists=1; break; }
+            done
+            [[ $exists -eq 0 ]] && resolved_list+=("$fpage")
+        done
+        
+        if [ ${#resolved_list[@]} -gt 0 ]; then
             mapfile -t _featured_list < <(
-                for p in "${_featured_list[@]}"; do
-                    echo "${PAGE_WEIGHTS[$p]:-9999}|$p"
+                for p in "${resolved_list[@]}"; do
+                    echo "${feat_weight[$p]}|$p"
                 done | sort -t'|' -k1,1n -k2,2 | awk -F'|' '{print $2}'
             )
+        else
+            _featured_list=()
         fi
-        local fpage
+        
+        WIKI_FEATURED_HTML=""
         for fpage in "${_featured_list[@]}"; do
-            local fname="${PAGE_TITLES[$fpage]:-}"
-            if [[ -z "$fname" ]]; then
-                fname="${fpage##*.}"
-                fname="${fname^}"
-            fi
-            WIKI_FEATURED_HTML+="<a href=\"/${fpage//./\/}.html\" class=\"menu-item\">${fname}</a>"$'\n'
+            WIKI_FEATURED_HTML+="<a href=\"${feat_url[$fpage]}\" class=\"menu-item\">${feat_title[$fpage]}</a>"$'\n'
         done
-    }
-
+    } 
     __partial_sidebar() {
         __log "Building Top Menu Tree..." -t info -l wiki
         WIKI_MENU_HTML="<ul class=\"sidebar-ul\">"$'\n'

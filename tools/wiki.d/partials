@@ -1,7 +1,8 @@
 #! /bin/bash
 
 __partials__() {
-    __partial_menu() {
+   
+    __partial_featured() {
         local -a _featured_list=()
         if declare -p WIKI_FEATURED >/dev/null 2>&1; then
             if [[ "$(declare -p WIKI_FEATURED)" == "declare -a"* ]]; then _featured_list=("${WIKI_FEATURED[@]}")
@@ -65,11 +66,17 @@ __partials__() {
         done
         
         if [ ${#resolved_list[@]} -gt 0 ]; then
-            mapfile -t _featured_list < <(
+            local -a raw_featured=()
+            mapfile -t raw_featured < <(
                 for p in "${resolved_list[@]}"; do
                     echo "${feat_weight[$p]}|$p"
-                done | sort -t'|' -k1,1n -k2,2 | awk -F'|' '{print $2}'
+                done | sort -t'|' -k1,1n -k2,2
             )
+            _featured_list=()
+            local item
+            for item in "${raw_featured[@]}"; do
+                _featured_list+=("${item##*|}")
+            done
         else
             _featured_list=()
         fi
@@ -78,18 +85,182 @@ __partials__() {
         for fpage in "${_featured_list[@]}"; do
             WIKI_FEATURED_HTML+="<a href=\"${feat_url[$fpage]}\" class=\"menu-item\">${feat_title[$fpage]}</a>"$'\n'
         done
-    } 
-    __partial_sidebar() {
+    }
+
+    __partial_menu() {
+        if [[ $# -gt 0 ]]; then
+            local m_root="" m_depth="999" m_type="" m_root_label="" m_page_label="title"
+            local arg
+            for arg in "$@"; do
+                [[ "$arg" == root=* ]] && m_root="${arg#*=}"
+                [[ "$arg" == depth=* ]] && m_depth="${arg#*=}"
+                [[ "$arg" == type=* ]] && m_type="${arg#*=}"
+                [[ "$arg" == root_label=* ]] && m_root_label="${arg#*=}"
+                [[ "$arg" == page_label=* ]] && m_page_label="${arg#*=}"
+            done
+            local orig_root="$m_root"
+            m_root="${m_root#/}"
+            m_root="${m_root%/}"
+            local prefix="${m_root//\//.}"
+            [[ -n "$prefix" ]] && prefix="${prefix}."
+            local c_menu="<ul class=\"sidebar-ul custom-menu\">"$'\n'
+            if [[ -n "$m_root" || "$orig_root" == "/" ]]; then
+                local root_node="${prefix%.}"
+                local root_disp=""
+                if [[ -n "$m_root_label" ]]; then
+                    root_disp="$m_root_label"
+                else
+                    [[ -n "$root_node" ]] && root_disp="${PAGE_TITLES[$root_node]:-}"
+                    [[ -z "$root_disp" ]] && root_disp="${m_root}"
+                    [[ -z "$root_disp" ]] && root_disp="/"
+                fi
+                [[ "$root_disp" != */ ]] && root_disp="${root_disp}/"
+                c_menu+="<li class=\"sidebar-collapsible\"><details open><summary><span class=\"toggle-icon\"></span>${root_disp}</summary>"$'\n'
+                c_menu+="<ul class=\"sidebar-ul-inner\">"$'\n'
+            fi
+            local -A seen=()
+            
+            local -a sorted_custom_pages=()
+            local -a raw_sorted_custom=()
+            mapfile -t raw_sorted_custom < <(
+                local p
+                for p in "${_pages[@]}"; do
+                    echo "${PAGE_WEIGHTS[$p]:-9999999}|$p"
+                done | sort -t'|' -k1,1n -k2,2
+            )
+            local item
+            for item in "${raw_sorted_custom[@]}"; do
+                sorted_custom_pages+=("${item##*|}")
+            done
+            
+            local -a current_path=()
+            local p
+            for p in "${sorted_custom_pages[@]}"; do
+                [[ -n "$prefix" && "$p" != "${prefix}"* ]] && continue
+                local rem="${p#$prefix}"
+                [[ -z "$rem" ]] && continue
+                
+                local prev_IFS="$IFS"
+                IFS='.'
+                local -a parts=($rem)
+                IFS="$prev_IFS"
+                
+                local p_depth=${#parts[@]}
+                
+                local is_dir=0
+                local target_depth=$p_depth
+                if (( p_depth > m_depth )); then
+                    target_depth=$m_depth
+                    is_dir=1
+                else
+                    local i
+                    for i in "${_pages[@]}"; do
+                        if [[ "$i" == "${p}."* ]]; then is_dir=1; break; fi
+                    done
+                fi
+                
+                if [[ "$m_type" == "dir" && $is_dir -eq 0 ]]; then continue; fi
+                if [[ "$m_type" == "file" && $is_dir -eq 1 ]]; then continue; fi
+                
+                local node_rem=""
+                local j
+                for ((j=0; j<target_depth; j++)); do
+                    [[ -n "$node_rem" ]] && node_rem+="."
+                    node_rem+="${parts[$j]}"
+                done
+                
+                local node_full="${prefix}${node_rem}"
+                if [[ -z "${seen[$node_full]:-}" ]]; then
+                    seen["$node_full"]="1"
+                    local disp_name=""
+                    
+                    if [[ "$m_page_label" == "weight" ]]; then
+                        [[ -n "$node_full" ]] && disp_name="${PAGE_WEIGHTS[$node_full]:-}"
+                        [[ -z "$disp_name" ]] && disp_name="9999999"
+                    elif [[ "$m_page_label" == "name" ]]; then
+                        disp_name="${parts[$((target_depth-1))]}"
+                    else
+                        [[ -n "$node_full" ]] && disp_name="${PAGE_TITLES[$node_full]:-}"
+                        [[ -z "$disp_name" ]] && disp_name="${parts[$((target_depth-1))]}"
+                    fi
+                    
+                    local page_url="${node_full//./\/}.html"
+                    if [[ $is_dir -eq 1 ]]; then
+                        [[ "$disp_name" != */ ]] && disp_name="${disp_name}/"
+                        local best_page="" best_weight=9999999 cp
+                        for cp in "${_pages[@]}"; do
+                            if [[ "$cp" == "${node_full}."* ]]; then
+                                local cw="${PAGE_WEIGHTS[$cp]:-9999999}"
+                                if (( cw < best_weight )); then
+                                    best_weight=$cw
+                                    best_page=$cp
+                                elif (( cw == best_weight )); then
+                                    if [[ -z "$best_page" || "$cp" < "$best_page" ]]; then
+                                        best_page=$cp
+                                    fi
+                                fi
+                            fi
+                        done
+                        if [[ -n "$best_page" ]]; then
+                            page_url="${best_page//./\/}.html"
+                        else
+                            page_url="${node_full//./\/}/index.html"
+                        fi
+                    fi
+                    
+                    local -a dir_parts=("${parts[@]:0:$((target_depth-1))}")
+                    
+                    local common_len=0
+                    while [[ $common_len -lt ${#current_path[@]} && $common_len -lt ${#dir_parts[@]} && "${current_path[$common_len]}" == "${dir_parts[$common_len]}" ]]; do
+                        common_len=$((common_len + 1))
+                    done
+                    
+                    local k
+                    for (( k=${#current_path[@]}-1; k>=common_len; k-- )); do 
+                        c_menu+="</ul></details></li>"$'\n'
+                    done
+                    
+                    for (( k=common_len; k<${#dir_parts[@]}; k++ )); do
+                        local dir="${dir_parts[$k]}"
+                        local css_class="sidebar-collapsible"
+                        [[ $k -gt 0 ]] && css_class="sidebar-collapsible sub-dir"
+                        c_menu+="<li class=\"${css_class}\"><details open><summary><span class=\"toggle-icon\"></span>${dir}/</summary><ul class=\"sidebar-ul-inner\">"$'\n'
+                    done
+                    
+                    c_menu+="<li class=\"sidebar-li\"><a href=\"/${page_url}\">${disp_name}</a></li>"$'\n'
+                    
+                    current_path=("${dir_parts[@]}")
+                fi
+            done
+            
+            local k
+            for (( k=${#current_path[@]}-1; k>=0; k-- )); do 
+                c_menu+="</ul></details></li>"$'\n'
+            done
+            
+            if [[ -n "$m_root" || "$orig_root" == "/" ]]; then
+                c_menu+="</ul></details></li>"$'\n'
+            fi
+            c_menu+="</ul>"$'\n'
+            printf "%s" "$c_menu"
+            return 0
+        fi
         __log "Building Top Menu Tree..." -t info -l wiki
         WIKI_MENU_HTML="<ul class=\"sidebar-ul\">"$'\n'
         local -a sorted_pages=()
         if [ ${#_nested_pages[@]} -gt 0 ]; then
-            mapfile -t sorted_pages < <(
+            local -a raw_sorted=()
+            mapfile -t raw_sorted < <(
+                local p
                 for p in "${_nested_pages[@]}"; do
                     local dir_path="${p%.*}"
-                    echo "${dir_path}|${PAGE_WEIGHTS[$p]:-9999}|$p"
-                done | sort -t'|' -k1,1 -k2,2n -k3,3 | awk -F'|' '{print $3}'
+                    echo "${dir_path}|${PAGE_WEIGHTS[$p]:-9999999}|$p"
+                done | sort -t'|' -k1,1 -k2,2n -k3,3
             )
+            local item
+            for item in "${raw_sorted[@]}"; do
+                sorted_pages+=("${item##*|}")
+            done
         fi
         local -a current_path=()
         local idx
@@ -112,7 +283,7 @@ __partials__() {
                 local dir="${dir_parts[$i]}"
                 local css_class="sidebar-collapsible"
                 [[ $i -gt 0 ]] && css_class="sidebar-collapsible sub-dir"
-                WIKI_MENU_HTML+="<li class=\"${css_class}\"><details open><summary>${dir}/</summary><ul class=\"sidebar-ul-inner\">"$'\n'
+                WIKI_MENU_HTML+="<li class=\"${css_class}\"><details open><summary><span class=\"toggle-icon\"></span>${dir}/</summary><ul class=\"sidebar-ul-inner\">"$'\n'
             done
             local page_url
             if [[ ${#dir_parts[@]} -gt 0 ]]; then
@@ -124,7 +295,8 @@ __partials__() {
             else
                 page_url="${page_name}.html"
             fi
-            local disp_name="${PAGE_TITLES[$entry]:-}"
+            local disp_name=""
+            [[ -n "$entry" ]] && disp_name="${PAGE_TITLES[$entry]:-}"
             [[ -z "$disp_name" ]] && disp_name="$page_name"
             WIKI_MENU_HTML+="<li class=\"sidebar-li\"><a href=\"/${page_url}\">${disp_name}</a></li>"$'\n'
             current_path=("${dir_parts[@]}")
@@ -134,10 +306,25 @@ __partials__() {
             WIKI_MENU_HTML+="</ul></details></li>"$'\n'
         done
         WIKI_MENU_HTML+="</ul>"$'\n'
+    }   
+
+    __partial_search() {
+        WIKI_SEARCH_HTML="<div class=\"search-container\">"$'\n'"    <form action=\"/search.html\" method=\"GET\" class=\"search-form\" style=\"display: inline;\">"$'\n'"        <span class=\"search-input-prefix\">search:</span> <input type=\"text\" name=\"q\" id=\"search-input\" autocomplete=\"off\">"$'\n'"    </form>"$'\n'"    <div id=\"search-results\" class=\"search-popup\" style=\"display: none; position: absolute; z-index: 1000;\"></div>"$'\n'"</div>"
     }
 
+    __partial_search_page() {
+        WIKI_SEARCH_PAGE_HTML="<div class=\"search-page-container\">"$'\n'"    <form action=\"/search.html\" method=\"GET\" class=\"search-form\">"$'\n'"        <span class=\"search-input-prefix\">search:</span> <input type=\"text\" name=\"q\" id=\"search-page-input\" autocomplete=\"off\">"$'\n'"    </form>"$'\n'"    <div id=\"search-page-results\" class=\"search-inline\"></div>"$'\n'"</div>"
+    }   
+
     __partial_breadcrumb() {
-        WIKI_BREADCRUMB_HTML="<breadcrumb><a href=\"/index.html\" class=\"breadcrumb-0\">Home</a>"
+        local b_label="title"
+        if [[ $# -gt 0 ]]; then
+            local arg
+            for arg in "$@"; do
+                [[ "$arg" == label=* ]] && b_label="${arg#*=}"
+            done
+        fi
+        local out="<breadcrumb><a href=\"/index.html\" class=\"breadcrumb-0\">Home</a>"
         local -a b_parts=()
         local OIFS="$IFS"; IFS='.'; read -ra b_parts <<< "$pagename"; IFS="$OIFS"
         local cum_slug=""
@@ -145,18 +332,23 @@ __partials__() {
         for ((i=0; i<${#b_parts[@]}; i++)); do
             local part="${b_parts[$i]}"
             if [[ -z "$cum_slug" ]]; then cum_slug="$part"; else cum_slug="${cum_slug}.${part}"; fi
-            local b_title="${PAGE_TITLES[$cum_slug]:-$part}"
+            local b_title=""
+            if [[ "$b_label" == "name" ]]; then
+                b_title="$part"
+            elif [[ "$b_label" == "weight" ]]; then
+                b_title="${PAGE_WEIGHTS[$cum_slug]:-9999}"
+            else
+                b_title="${PAGE_TITLES[$cum_slug]:-$part}"
+            fi
             local b_idx=$((i + 1))
-            
             if [[ $i -eq $((${#b_parts[@]} - 1)) ]]; then
-                WIKI_BREADCRUMB_HTML+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${cum_slug//./\/}.html\" class=\"breadcrumb-current\">${b_title}</a>"
+                out+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${cum_slug//./\/}.html\" class=\"breadcrumb-current\">${b_title}</a>"
             else
                 local dir_path="${cum_slug//./\/}"
-                
                 if [[ -f "$SOURCEDIR/$dir_path/index.md" ]]; then
-                    WIKI_BREADCRUMB_HTML+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${dir_path}/index.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
+                    out+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${dir_path}/index.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
                 elif [[ -f "$SOURCEDIR/${dir_path}.md" ]]; then
-                    WIKI_BREADCRUMB_HTML+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${dir_path}.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
+                    out+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${dir_path}.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
                 else
                     local best_page=""
                     local best_weight=9999999
@@ -167,7 +359,6 @@ __partials__() {
                             if [[ "$remainder" != *.* ]]; then
                                 local w="${PAGE_WEIGHTS[$p]}"
                                 [[ -z "$w" ]] && w=9999999
-                                
                                 if (( w < best_weight )); then
                                     best_weight=$w
                                     best_page="$p"
@@ -179,15 +370,74 @@ __partials__() {
                             fi
                         fi
                     done
-                    
                     if [[ -n "$best_page" ]]; then
-                        WIKI_BREADCRUMB_HTML+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${best_page//./\/}.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
+                        out+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${best_page//./\/}.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
                     else
-                        WIKI_BREADCRUMB_HTML+="<span class=\"breadcrumb-sep\">/</span><span class=\"breadcrumb-${b_idx}\">${b_title}</span>"
+                        out+="<span class=\"breadcrumb-sep\">/</span><span class=\"breadcrumb-${b_idx}\">${b_title}</span>"
                     fi
                 fi
             fi
         done
-        WIKI_BREADCRUMB_HTML+="</breadcrumb>"
+        out+="</breadcrumb>"
+        printf "%s" "$out"
     }
+
+    __partial_thumb() {
+        WIKI_THUMB_HTML=""
+        local in_globals=0 g_line t_img
+        while IFS= read -r g_line || [[ -n "$g_line" ]]; do
+            g_line="${g_line%$'\r'}"
+            if (( in_globals == 0 )); then
+                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals=1
+            else
+                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
+                if [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*thumb:[[:space:]]*(.*)$ ]]; then
+                    t_img="${BASH_REMATCH[1]}"
+                    t_img="${t_img#"${t_img%%[![:space:]]*}"}"
+                    t_img="${t_img%"${t_img##*[![:space:]]}"}"
+                    if [[ -n "$t_img" ]]; then
+                        if [[ "$t_img" != http://* && "$t_img" != https://* && "$t_img" != /* ]]; then
+                            t_img="/_static/${t_img}"
+                        fi
+                        WIKI_THUMB_HTML="<figure class=\"block-image\" style=\"display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;\">"$'\n'
+                        WIKI_THUMB_HTML+="    <img src=\"${t_img}\" alt=\"\" class=\"block-image-img\" style=\"width: inherit;\">"$'\n'
+                        WIKI_THUMB_HTML+="</figure>"
+                    fi
+                fi
+            fi
+        done < "$file"
+    }
+
+    __partial_tags() {
+        WIKI_TAGS_HTML=""
+        local in_globals=0 g_line t_tags old_ifs t
+        local -a tag_arr
+        while IFS= read -r g_line || [[ -n "$g_line" ]]; do
+            g_line="${g_line%$'\r'}"
+            if (( in_globals == 0 )); then
+                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals=1
+            else
+                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
+                if [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*tags:[[:space:]]*(.*)$ ]]; then
+                    t_tags="${BASH_REMATCH[1]}"
+                    t_tags="${t_tags#"${t_tags%%[![:space:]]*}"}"
+                    t_tags="${t_tags%"${t_tags##*[![:space:]]}"}"
+                    if [[ -n "$t_tags" ]]; then
+                        WIKI_TAGS_HTML="<tags>"$'\n'
+                        old_ifs="$IFS"
+                        IFS=","
+                        tag_arr=($t_tags)
+                        IFS="$old_ifs"
+                        for t in "${tag_arr[@]}"; do
+                            t="${t#"${t%%[![:space:]]*}"}"
+                            t="${t%"${t##*[![:space:]]}"}"
+                            [[ -z "$t" ]] && continue
+                            WIKI_TAGS_HTML+="<tag><a href=\"/search.html?q=tag:${t}\">${t}</a></tag>"$'\n'
+                        done
+                        WIKI_TAGS_HTML+="</tags>"
+                    fi
+                fi
+            fi
+        done < "$file"
+    }    
 }

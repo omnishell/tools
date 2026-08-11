@@ -143,6 +143,70 @@ __blocks__() {
         LIST_HTML_MAP["$bname"]+="<li><a href=\"#${anchor_id}\">${BLOCK_TITLE}</a></li>"$'\n'
         content+="${html}"
     }
+
+    __block_quote() {
+        local bname="$1"
+        local _ref="$2[@]"
+        local -a my_buffer=("${!_ref}")
+        if [[ ${#my_buffer[@]} -eq 0 ]]; then return; fi
+        
+        local b_id="rnd-$RANDOM"
+        local b_width="" b_style="" q_cite=""
+        local q_text="" current_key="" current_val="" b_line
+        
+        for b_line in "${my_buffer[@]}"; do
+            if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
+                if [[ -n "$current_key" ]]; then
+                    if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
+                    elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"
+                    elif [[ "$current_key" == "cite" ]]; then q_cite="$current_val"
+                    elif [[ "$current_key" == "text" ]]; then 
+                        q_text="${q_text:+$q_text$'\n'}$current_val"
+                    fi
+                fi
+                current_key="${BASH_REMATCH[1]}"
+                current_val="${BASH_REMATCH[2]}"
+                current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                current_val="${current_val%"${current_val##*[![:space:]]}"}"
+            else
+                if [[ -n "$current_key" ]]; then
+                    current_val+=$'\n'"$b_line"
+                else
+                    q_text+="${q_text:+$'\n'}$b_line"
+                fi
+            fi
+        done
+        
+        if [[ -n "$current_key" ]]; then
+            if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
+            elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+            elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"
+            elif [[ "$current_key" == "cite" ]]; then q_cite="$current_val"
+            elif [[ "$current_key" == "text" ]]; then 
+                q_text="${q_text:+$q_text$'\n'}$current_val"
+            fi
+        fi
+        
+        q_text="${q_text#"${q_text%%[![:space:]]*}"}"
+        q_text="${q_text%"${q_text##*[![:space:]]}"}"
+        
+        if type __parse_block_field >/dev/null 2>&1; then
+            q_text="$(__parse_block_field "$q_text")"
+        else
+            q_text="${q_text//$'\n'/<br>}"
+        fi
+        
+        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        local cite_attr=""
+        [[ -n "$q_cite" ]] && cite_attr=" cite=\"${q_cite}\""
+        
+        local html="<blockquote id=\"block-quote-${b_id}\" class=\"block-quote\"${style_attr}${cite_attr}>"$'\n'
+        html+="    ${q_text}"$'\n'
+        html+="</blockquote>"$'\n'
+        
+        content+="${html}"
+    }
     
     __block_def() {
         local bname="$1"
@@ -799,6 +863,18 @@ __blocks__() {
         content+="${out_html}"
     }
 
+    __block_plain() {
+        local bname="$1"
+        local -n _buffer_ref="$2"
+                 
+        if [[ ${#_buffer_ref[@]} -eq 0 ]]; then return; fi
+        local old_ifs="$IFS"
+        IFS=$'\n'
+        local html="<plain style=\"white-space: pre; overflow-x: auto; display: block;\">"$'\n'"${_buffer_ref[*]}"$'\n'"</plain>"$'\n'
+        IFS="$old_ifs"
+        content+="${html}"
+    }   
+
     __get_style_attr() {
         local b_width="$1" b_style="$2"
         local inline_style=""
@@ -834,13 +910,77 @@ __blocks__() {
         fi
     }
 
+    __block_image() {
+        local bname="$1"
+        local -n img_buffer_ref="$2"
+        if [[ ${#img_buffer_ref[@]} -eq 0 ]]; then return; fi
+        local b_id="rnd-$RANDOM"
+        local b_img="" b_alt="" b_cap="" b_width="" b_style="" b_align=""
+        local i_width="" i_style=""
+        local current_key="" current_val="" b_line
+        for b_line in "${img_buffer_ref[@]}"; do
+            if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
+                if [[ -n "$current_key" ]]; then
+                    if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
+                    elif [[ "$current_key" == "image" ]]; then b_img="$current_val"
+                    elif [[ "$current_key" == "alt" ]]; then b_alt="$current_val"
+                    elif [[ "$current_key" == "__caption__" ]]; then b_cap="$current_val"
+                    elif [[ "$current_key" == "align" ]]; then b_align="$current_val"
+                    elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"
+                    elif [[ "$current_key" == "width" ]]; then i_width="$current_val"
+                    elif [[ "$current_key" == "style" ]]; then i_style="$current_val"; fi
+                fi
+                current_key="${BASH_REMATCH[1]}"
+                current_val="${BASH_REMATCH[2]}"
+                current_val="${current_val#"${current_val%%[![:space:]]*}"}"
+                current_val="${current_val%"${current_val##*[![:space:]]}"}"
+            else
+                if [[ -n "$current_key" ]]; then
+                    current_val+=$'\n'"$b_line"
+                fi
+            fi
+        done
+        if [[ -n "$current_key" ]]; then
+            if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
+            elif [[ "$current_key" == "image" ]]; then b_img="$current_val"
+            elif [[ "$current_key" == "alt" ]]; then b_alt="$current_val"
+            elif [[ "$current_key" == "__caption__" ]]; then b_cap="$current_val"
+            elif [[ "$current_key" == "align" ]]; then b_align="$current_val"
+            elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
+            elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"
+            elif [[ "$current_key" == "width" ]]; then i_width="$current_val"
+            elif [[ "$current_key" == "style" ]]; then i_style="$current_val"; fi
+        fi
+        if [[ -n "$b_img" && "$b_img" != http://* && "$b_img" != https://* && "$b_img" != /* ]]; then
+            b_img="/_static/${b_img}"
+        fi
+        if [[ -n "$b_align" ]]; then
+            b_style="display: flex; flex-direction: column; align-items: ${b_align}; justify-content: ${b_align}; text-align: ${b_align}; ${b_style}"
+        fi
+        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        local img_style_attr="$(__get_style_attr "$i_width" "$i_style")"
+        if [[ -z "$img_style_attr" ]]; then
+            img_style_attr=" style=\"width: inherit;\""
+        elif [[ "$img_style_attr" != *"width"* ]]; then
+            img_style_attr="${img_style_attr%\"}; width: inherit;\""
+        fi
+        local html="<figure id=\"block-image-${b_id}\" class=\"block-image\"${style_attr}>"$'\n'
+        html+="    <img src=\"${b_img}\" alt=\"${b_alt}\" class=\"block-image-img\"${img_style_attr}>"$'\n'
+        if [[ -n "$b_cap" ]]; then
+            html+="    <figcaption class=\"block-image-caption\">${b_cap}</figcaption>"$'\n'
+        fi
+        html+="</figure>"$'\n'
+        content+="${html}"
+    }
+
     __block_text() {
         local bname="$1"
         local _ref="$2[@]"
         local -a my_buffer=("${!_ref}")
         if [[ ${#my_buffer[@]} -eq 0 ]]; then return; fi
         local t_id="rnd-$RANDOM"
-        local t_text="" b_width="" b_style=""
+        local t_text="" b_width="" b_style="" t_width="" t_style=""
         
         local -A child_html=()
         local in_child="" child_name="" child_indent=""
@@ -865,7 +1005,9 @@ __blocks__() {
                         if [[ "$current_key" == "__id__" ]]; then t_id="$current_val"
                         elif [[ "$current_key" == "text" ]]; then t_text="$current_val"
                         elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
-                        elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+                        elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"
+                        elif [[ "$current_key" == "width" ]]; then t_width="$current_val"
+                        elif [[ "$current_key" == "style" ]]; then t_style="$current_val"; fi
                         current_key=""
                     fi
                     local old_content="$content"
@@ -897,7 +1039,9 @@ __blocks__() {
                     if [[ "$current_key" == "__id__" ]]; then t_id="$current_val"
                     elif [[ "$current_key" == "text" ]]; then t_text="$current_val"
                     elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
-                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"
+                    elif [[ "$current_key" == "width" ]]; then t_width="$current_val"
+                    elif [[ "$current_key" == "style" ]]; then t_style="$current_val"; fi
                     current_key=""
                 fi
                 continue
@@ -910,7 +1054,9 @@ __blocks__() {
                     if [[ "$current_key" == "__id__" ]]; then t_id="$current_val"
                     elif [[ "$current_key" == "text" ]]; then t_text="$current_val"
                     elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
-                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"
+                    elif [[ "$current_key" == "width" ]]; then t_width="$current_val"
+                    elif [[ "$current_key" == "style" ]]; then t_style="$current_val"; fi
                     current_key=""
                 fi
                 continue
@@ -923,7 +1069,9 @@ __blocks__() {
                     if [[ "$current_key" == "__id__" ]]; then t_id="$current_val"
                     elif [[ "$current_key" == "text" ]]; then t_text="$current_val"
                     elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
-                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"
+                    elif [[ "$current_key" == "width" ]]; then t_width="$current_val"
+                    elif [[ "$current_key" == "style" ]]; then t_style="$current_val"; fi
                 fi
                 current_key="${BASH_REMATCH[1]}"
                 current_val="${BASH_REMATCH[2]}"
@@ -941,7 +1089,9 @@ __blocks__() {
             if [[ "$current_key" == "__id__" ]]; then t_id="$current_val"
             elif [[ "$current_key" == "text" ]]; then t_text="$current_val"
             elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
-            elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
+            elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"
+            elif [[ "$current_key" == "width" ]]; then t_width="$current_val"
+            elif [[ "$current_key" == "style" ]]; then t_style="$current_val"; fi
         fi
         
         if type __parse_block_field >/dev/null 2>&1; then
@@ -949,13 +1099,18 @@ __blocks__() {
         else
             t_text="${t_text//$'\n'/<br>}"
         fi
+        
         local style_attr="$(__get_style_attr "$b_width" "$b_style")"
-        local html="<text id=\"block-text-${t_id}\" class=\"block-text\"${style_attr}>"$'\n'
-        html+="    ${t_text}"$'\n'
+        local tag_style_attr="$(__get_style_attr "$t_width" "$t_style")"
+        
+        local html="<div id=\"block-text-wrapper-${t_id}\" class=\"block-text-wrapper\"${style_attr}>"$'\n'
+        html+="    <text id=\"block-text-${t_id}\" class=\"block-text\"${tag_style_attr}>"$'\n'
+        html+="        ${t_text}"$'\n'
         for c_id in "${child_order[@]}"; do
             html+="${child_html[$c_id]}"$'\n'
         done
-        html+="</text>"$'\n'
+        html+="    </text>"$'\n'
+        html+="</div>"$'\n'
         content+="${html}"
     }
 
@@ -1100,56 +1255,7 @@ __blocks__() {
         html+="</buttons>"$'\n'
         content+="${html}"
     }
-
-    __block_image() {
-        local bname="$1"
-        local -n img_buffer_ref="$2"
-        if [[ ${#img_buffer_ref[@]} -eq 0 ]]; then return; fi
-        local b_id="rnd-$RANDOM"
-        local b_img="" b_alt="" b_cap="" b_width="" b_style=""
-        local current_key="" current_val="" b_line
-        for b_line in "${img_buffer_ref[@]}"; do
-            if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
-                if [[ -n "$current_key" ]]; then
-                    if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
-                    elif [[ "$current_key" == "image" ]]; then b_img="$current_val"
-                    elif [[ "$current_key" == "alt" ]]; then b_alt="$current_val"
-                    elif [[ "$current_key" == "caption" ]]; then b_cap="$current_val"
-                    elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
-                    elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
-                fi
-                current_key="${BASH_REMATCH[1]}"
-                current_val="${BASH_REMATCH[2]}"
-                current_val="${current_val#"${current_val%%[![:space:]]*}"}"
-                current_val="${current_val%"${current_val##*[![:space:]]}"}"
-            else
-                if [[ -n "$current_key" ]]; then
-                    current_val+=$'\n'"$b_line"
-                fi
-            fi
-        done
-        if [[ -n "$current_key" ]]; then
-            if [[ "$current_key" == "__id__" ]]; then b_id="$current_val"
-            elif [[ "$current_key" == "image" ]]; then b_img="$current_val"
-            elif [[ "$current_key" == "alt" ]]; then b_alt="$current_val"
-            elif [[ "$current_key" == "caption" ]]; then b_cap="$current_val"
-            elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
-            elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
-        fi
-        if [[ -n "$b_img" && "$b_img" != http://* && "$b_img" != https://* && "$b_img" != /* ]]; then
-            b_img="/_static/${b_img}"
-        fi
-        
-        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
-        local html="<image id=\"block-image-${b_id}\" class=\"block-image\"${style_attr}>"$'\n'
-        html+="    <img src=\"${b_img}\" alt=\"${b_alt}\" class=\"block-image-img\">"$'\n'
-        if [[ -n "$b_cap" ]]; then
-            html+="    <figcaption class=\"block-image-caption\">${b_cap}</figcaption>"$'\n'
-        fi
-        html+="</image>"$'\n'
-        content+="${html}"
-    }
-
+ 
     __block_card() {
         local bname="$1"
         local -n card_buffer_ref="$2"
@@ -1404,6 +1510,7 @@ __blocks__() {
         content+="${html}"
     }  
 
+
     __block_carousel() {
         local bname="$1"
         local _ref="$2[@]"
@@ -1416,7 +1523,7 @@ __blocks__() {
         local in_child="" child_name=""
         local -a child_buffer=()
         local current_key="" current_val="" b_line
-        
+                 
         for b_line in "${my_buffer[@]}"; do
             if [[ -n "$in_child" ]]; then
                 if [[ "$b_line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]]; then
@@ -1456,7 +1563,7 @@ __blocks__() {
                 fi
                 continue
             fi
-            
+                         
             if [[ "$b_line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
                 in_child="1"
                 child_name="${BASH_REMATCH[2]}"
@@ -1473,7 +1580,7 @@ __blocks__() {
                 fi
                 continue
             fi
-            
+                         
             if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
                 if [[ -n "$current_key" ]]; then
                     current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
@@ -1494,7 +1601,7 @@ __blocks__() {
                 fi
             fi
         done
-        
+                 
         if [[ -n "$current_key" ]]; then
             current_val="${current_val#"${current_val%%[!$'\n\r']*}"}"
             current_val="${current_val%"${current_val##*[![:space:]]}"}"
@@ -1504,13 +1611,29 @@ __blocks__() {
             elif [[ "$current_key" == "__width__" ]]; then b_width="$current_val"
             elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
         fi
+
+        local c_items_num="1"
+        local c_items_attr="1"
+        local raw_c_items="${c_items//&lt;/<}"
+        local stripped_items="${raw_c_items//[[:space:]]/}"
         
+        if [[ "${stripped_items}" == "<="* ]]; then
+            local num_part="${stripped_items#<=}"
+            if [[ "$num_part" =~ ^[0-9]+$ ]]; then
+                c_items_num="$num_part"
+                c_items_attr="<=${c_items_num}"
+            fi
+        elif [[ "${stripped_items}" =~ ^[0-9]+$ ]]; then
+            c_items_num="${stripped_items}"
+            c_items_attr="${stripped_items}"
+        fi
+                 
         local style_attr="$(__get_style_attr "$b_width" "$b_style")"
-        local html="<carousel id=\"block-carousel-${c_id}\" class=\"block-carousel\" data-items=\"${c_items}\"${style_attr}>"$'\n'
+        local html="<carousel id=\"block-carousel-${c_id}\" class=\"block-carousel\" data-items=\"${c_items_attr}\"${style_attr}>"$'\n'
         html+="    <div class=\"carousel-wrapper\">"$'\n'
         html+="        <button class=\"carousel-btn-prev\">Prev</button>"$'\n'
         html+="        <slides id=\"block-carousel-slides-${c_id}\" class=\"block-carousel-slides\">"$'\n'
-        
+                 
         local i=1 it clean_it display_style
         for it in "${items[@]}"; do
             clean_it="${it//\"/}"
@@ -1519,8 +1642,8 @@ __blocks__() {
             clean_it="${clean_it#"${clean_it%%[![:space:]]*}"}"
             clean_it="${clean_it%"${clean_it##*[![:space:]]}"}"
             display_style=""
-            [[ $i -gt $c_items ]] && display_style=" style=\"display: none;\""
-            
+            [[ $i -gt $c_items_num ]] && display_style=" style=\"display: none;\""
+                         
             html+="            <slide id=\"block-carousel-slide-${i}-${c_id}\" class=\"block-carousel-slide\"${display_style}>"$'\n'
             if [[ -n "${child_html[$clean_it]:-}" ]]; then
                 html+="${child_html[$clean_it]}"
@@ -1533,7 +1656,7 @@ __blocks__() {
         html+="    </div>"$'\n'
         html+="    <nav class=\"carousel-dots\">"$'\n'
         local j active_class dots_count
-        dots_count=$(( (${#items[@]} + c_items - 1) / c_items ))
+        dots_count=$(( (${#items[@]} + c_items_num - 1) / c_items_num ))
         for ((j=0; j<dots_count; j++)); do
             active_class=""
             [[ $j -eq 0 ]] && active_class=" active"
@@ -1542,7 +1665,7 @@ __blocks__() {
         html+="    </nav>"$'\n'
         html+="</carousel>"$'\n'
         content+="${html}"
-    }   
+    }
 
     __block_grid() {
         local bname="$1"

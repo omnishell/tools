@@ -5,11 +5,11 @@ __build__() {
             __log "WIKI_PAGES empty for '$w_name'. Building dynamically from '$SOURCEDIR'." -t info -l wiki
             while IFS= read -r -d '' file; do
                 local rel_path="${file#$SOURCEDIR/}"
-                local no_ext="${rel_path%.md}"
+                local no_ext="${rel_path%.wiki}"
                 local slug="${no_ext//\//.}"
                 _pages+=("$slug")
                 WIKI_PAGE_VARS["${w_name}::${slug}"]="path:${file}"
-            done < <(find "$SOURCEDIR" -type f -name "*.md" -print0)
+            done < <(find "$SOURCEDIR" -type f -name "*.wiki" -print0)
         else
             local OIFS="$IFS"; IFS=','
             local p
@@ -86,8 +86,8 @@ __build__() {
         fi
     }
     __build_partials() {
+        __partial_featured
         __partial_menu
-        __partial_sidebar
         
         for p in "${_pages[@]}"; do
             local map_p_name="${p##*.}" map_p_dir="" map_p_url=""
@@ -119,6 +119,10 @@ __build__() {
             done
             IFS="$OIFS"
             if [[ ! -f "$file" ]]; then continue; fi
+            
+            local current_dir="${p%.*}"
+            if [[ "$current_dir" == "$p" ]]; then current_dir="."; fi
+            
             local in_globals=0 g_line
             while IFS= read -r g_line || [[ -n "$g_line" ]]; do
                 g_line="${g_line%$'\r'}"
@@ -134,6 +138,43 @@ __build__() {
                     fi
                 fi
             done < "$file"
+            
+            if [[ -z "$p_tmpl" ]]; then
+                local idx_slug="${current_dir}.index"
+                [[ "$current_dir" == "." ]] && idx_slug="index"
+                
+                if [[ "$p" != "$idx_slug" ]]; then
+                    local idx_vars="${WIKI_PAGE_VARS[${w_name}::${idx_slug}]:-}"
+                    if [[ -n "$idx_vars" ]]; then
+                        local idx_file=""
+                        local OIFS="$IFS"; IFS=','
+                        for pair in $idx_vars; do
+                            local k="${pair%%:*}" v="${pair#*:}"
+                            [[ "$k" == "path" ]] && idx_file="$v"
+                        done
+                        IFS="$OIFS"
+                        
+                        if [[ -f "$idx_file" ]]; then
+                            local in_globals_idx=0 g_line_idx
+                            while IFS= read -r g_line_idx || [[ -n "$g_line_idx" ]]; do
+                                g_line_idx="${g_line_idx%$'\r'}"
+                                if (( in_globals_idx == 0 )); then
+                                    [[ "$g_line_idx" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals_idx=1
+                                else
+                                    [[ "$g_line_idx" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
+                                    if [[ "$g_line_idx" =~ ^[[:space:]]*::[[:space:]]*template:[[:space:]]*(.*)$ ]]; then
+                                        local temp_tmpl="${BASH_REMATCH[1]}"
+                                        temp_tmpl="${temp_tmpl#"${temp_tmpl%%[![:space:]]*}"}"
+                                        temp_tmpl="${temp_tmpl%"${temp_tmpl##*[![:space:]]}"}"
+                                        [[ -n "$temp_tmpl" ]] && p_tmpl="${TEMPLATEDIR}/${temp_tmpl}"
+                                    fi
+                                fi
+                            done < "$idx_file"
+                        fi
+                    fi
+                fi
+            fi
+
             local page_tmpl_raw="${p_tmpl:-$TEMPLATEDIR}"
             if [[ -n "${WIKI_TEMPLATE_VARS[$page_tmpl_raw]:-}" ]]; then
                 page_tmpl_raw="${WIKI_TEMPLATE_VARS[$page_tmpl_raw]}"
@@ -147,9 +188,8 @@ __build__() {
             fi
             local pagename="$p"
             local out_path="$BUILDDIR/${p//./\/}.html"
-            local current_dir="${p%.*}"
-            if [[ "$current_dir" == "$p" ]]; then current_dir="."; fi
             mkdir -p "${out_path%/*}"
+            
             local file_hash=$(cksum "$file" | awk '{print $1 "_" $2}')
             if [[ $force_rebuild -eq 0 && "${CACHE_HASHES[$file]:-}" == "$file_hash" && -f "$out_path" ]]; then
                 for idx_f in "$cache_dir"/${pagename}_index_*.json; do
@@ -181,7 +221,6 @@ __build__() {
             done
             CACHE_HASHES["$file"]="$file_hash"
         done
-
         local search_js="const SEARCH_CONFIG = ["
         local sf=1
         for k in "${!SEARCH_INDEX_MAP[@]}"; do
@@ -194,7 +233,6 @@ __build__() {
             sf=0
         done
         search_js+=" ];"
-
         for p in "${build_targets[@]}"; do
             local out_path="$BUILDDIR/${p//./\/}.html"
             if [[ -f "$out_path" ]]; then

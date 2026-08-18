@@ -140,14 +140,20 @@ __parse__() {
                     label="${label#"${label%%[![:space:]]*}"}"
                     label="${label%"${label##*[![:space:]]}"}"
                 fi
-                local ref_key=""
-                if type __slugify >/dev/null 2>&1; then
-                    ref_key="$(__slugify "$raw_ref")"
-                else
-                    ref_key="${raw_ref//[^a-zA-Z0-9_.-]/}"
-                fi
+                
                 local old_line="$line"
-                line="${line/"$full"/%%WIKI_REF:${topic}:${ref_key}:${label}%%}"
+                if [[ "$topic" == "page" ]]; then
+                    local l_href="/${raw_ref//./\/}.html"
+                    line="${line/"$full"/<a href=\"${l_href}\">${label}</a>}"
+                else
+                    local ref_key=""
+                    if type __slugify >/dev/null 2>&1; then
+                        ref_key="$(__slugify "$raw_ref")"
+                    else
+                        ref_key="${raw_ref//[^a-zA-Z0-9_.-]/}"
+                    fi
+                    line="${line/"$full"/%%WIKI_REF:${topic}:${ref_key}:${label}%%}"
+                fi
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
@@ -167,7 +173,7 @@ __parse__() {
                 if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
-    } 
+    }    
 
     __parse_links() {
         if [[ "$line" == *"["* && "$line" == *"]("* ]]; then
@@ -722,6 +728,38 @@ __parse__() {
         fi
     }
 
+    __parse_listings() {
+        if [[ "$line" != *"{{"* ]]; then return 0; fi
+        while [[ "$line" =~ \{\{[[:space:]]*list\.pages([[:space:]]+([^}]+))?[[:space:]]*\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local args="${BASH_REMATCH[2]:-}"
+            local list_html="$(__listing_pages $args)"
+            line="${line/"$full_match"/$list_html}"
+            matched=1
+        done
+        
+        while [[ "$line" =~ \{\{[[:space:]]*list\.block\.([a-zA-Z0-9_-]+)([[:space:]]+([^}]+))?[[:space:]]*\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local b_type="${BASH_REMATCH[1]}"
+            local args="${BASH_REMATCH[3]:-}"
+            local list_html="$(__listing_blocks "$b_type" $args)"
+            line="${line/"$full_match"/$list_html}"
+            matched=1
+        done
+        
+        while [[ "$line" =~ \{\{[[:space:]]*list\.([a-zA-Z0-9_-]+)(:([^}[:space:]]+))?[[:space:]]*\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local l_type="${BASH_REMATCH[1]}"
+            local l_path="${BASH_REMATCH[3]}"
+            local list_html="$(__listing_blocks "$l_type" "$l_path")"
+            line="${line/"$full_match"/$list_html}"
+            matched=1
+        done
+
+        if (( matched == 1 )); then
+            set_ignore_this_turn=1
+        fi
+    }
 
     __parse_main() {
         local section_count=0
@@ -734,6 +772,7 @@ __parse__() {
             __parse_html && continue
             
             __parse_vars
+            __parse_listings
             __parse_headers
             __parse_section
             __parse_markers && continue

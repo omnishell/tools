@@ -252,7 +252,7 @@ __build__() {
         done
     }
 
-    __build_index() {
+    __build_search_index() {
         > "$cache_file"
         for f in "${!CACHE_HASHES[@]}"; do
             echo "${CACHE_HASHES[$f]} $f" >> "$cache_file"
@@ -272,4 +272,119 @@ __build__() {
         json_content+="}"
         printf "%s" "$json_content" > "$BUILDDIR/index.json"
     }
+
+    __build_defs_index() {
+        local json_content="{"
+        local first=1
+        
+        local defs_data="${SEARCH_INDEX_MAP["def"]:-}"
+        local line
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line="${line%"${line##*[![:space:]]}"}"
+            [[ -z "$line" ]] && continue
+            
+            local context="" term="" id="" related="" url=""
+            
+            if [[ "$line" =~ \"url\":\"([^\"]*)\" ]]; then
+                url="${BASH_REMATCH[1]}"
+            fi
+            if [[ "$line" =~ \"__context__\":\"([^\"]*)\" ]]; then
+                context="${BASH_REMATCH[1]}"
+            fi
+            if [[ "$line" =~ \"term\":\"([^\"]*)\" ]]; then
+                term="${BASH_REMATCH[1]}"
+            fi
+            if [[ "$line" =~ \"__id__\":\"([^\"]*)\" ]]; then
+                id="${BASH_REMATCH[1]}"
+            fi
+            if [[ "$line" =~ \"related\":\"([^\"]*)\" ]]; then
+                related="${BASH_REMATCH[1]}"
+            fi
+            
+            local raw_id="$id"
+            [[ -z "$raw_id" ]] && raw_id="$term"
+            [[ -z "$raw_id" ]] && continue
+            
+            local clean_id="$(__slugify "$raw_id")"
+            local ref_key="$clean_id"
+            if [[ -n "$context" && "$raw_id" != *.* ]]; then
+                ref_key="$(__slugify "${context}.${raw_id}")"
+            fi
+            
+            local -a rel_arr=()
+            if [[ -n "$related" ]]; then
+                local old_ifs="$IFS"
+                IFS=","
+                local items=($related)
+                IFS="$old_ifs"
+                local r
+                for r in "${items[@]}"; do
+                    r="${r#"${r%%[![:space:]]*}"}"
+                    r="${r%"${r##*[![:space:]]}"}"
+                    r="${r#def.}"
+                    if [[ -n "$r" ]]; then
+                        r="$(__slugify "$r")"
+                        rel_arr+=("\"$r\"")
+                    fi
+                done
+            fi
+            
+            local rel_json=""
+            if [[ ${#rel_arr[@]} -gt 0 ]]; then
+                local old_ifs="$IFS"
+                IFS=","
+                rel_json="${rel_arr[*]}"
+                IFS="$old_ifs"
+            fi
+            
+            (( first == 0 )) && json_content+=","
+            json_content+=$'\n'"  \"${ref_key}\": { \"url\": \"${url}\", \"deps\": [ ${rel_json} ] }"
+            first=0
+            
+        done <<< "$defs_data"
+        
+        json_content+=$'\n'"}"
+        
+        printf "%s\n" "$json_content" > "$BUILDDIR/defs.json"
+        __log "Generated defs index -> $BUILDDIR/defs.json" -t success -l wiki
+    }
+
+    __build_sitemap() {
+        local domain=""
+        
+        if [[ "${WIKI_VARS[$w_name]:-}" =~ (domain|url):[[:space:]]*([^,]+) ]]; then
+            domain="${BASH_REMATCH[2]}"
+        fi
+        
+        if [[ -z "$domain" ]]; then
+            __log "No domain was found. Skipping sitemap.xml generation." -t warning -l wiki
+            return 1
+        fi
+        
+        domain="${domain%/}"
+        [[ "$domain" != http://* && "$domain" != https://* ]] && domain="https://$domain"
+        
+        local current_date
+        printf -v current_date "%(%Y-%m-%d)T" -1
+        
+        local xml_content="<?xml version=\"1.0\" encoding=\"UTF-8\"?>"$'\n'
+        xml_content+="<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">"$'\n'
+        
+        local p path loc
+        for p in "${_pages[@]}"; do
+            path="${p//./\/}.html"
+            loc="${domain}/${path}"
+            [[ "$path" == "index.html" ]] && loc="${domain}/"
+            
+            xml_content+="  <url>"$'\n'
+            xml_content+="    <loc>${loc}</loc>"$'\n'
+            xml_content+="    <lastmod>${current_date}</lastmod>"$'\n'
+            xml_content+="  </url>"$'\n'
+        done
+        xml_content+="</urlset>"$'\n'
+        
+        printf "%s" "$xml_content" > "$BUILDDIR/sitemap.xml"
+        __log "Generated sitemap -> $BUILDDIR/sitemap.xml" -t success -l wiki
+    }
+
 }

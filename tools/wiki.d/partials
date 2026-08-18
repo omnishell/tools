@@ -29,10 +29,10 @@ __partials__() {
                 for cp in "${_pages[@]}"; do
                     if [[ "$cp" == "$fpage" || "$cp" == "${fpage}."* ]]; then
                         local cw="${PAGE_WEIGHTS[$cp]:-9999999}"
-                        if (( cw < best_weight )); then
+                        if (( 10#$cw < 10#$best_weight )); then
                             best_weight=$cw
                             best_page=$cp
-                        elif (( cw == best_weight )); then
+                        elif (( 10#$cw == 10#$best_weight )); then
                             if [[ -z "$best_page" || "$cp" < "$best_page" ]]; then
                                 best_page=$cp
                             fi
@@ -86,17 +86,23 @@ __partials__() {
             WIKI_FEATURED_HTML+="<a href=\"${feat_url[$fpage]}\" class=\"menu-item\">${feat_title[$fpage]}</a>"$'\n'
         done
     }
-
+    
     __partial_menu() {
+        local m_root="" m_depth="999" m_type="" m_root_label="" m_page_label="title" m_exclude="" m_closed="-1"
         if [[ $# -gt 0 ]]; then
-            local m_root="" m_depth="999" m_type="" m_root_label="" m_page_label="title"
-            local arg
-            for arg in "$@"; do
-                [[ "$arg" == root=* ]] && m_root="${arg#*=}"
-                [[ "$arg" == depth=* ]] && m_depth="${arg#*=}"
-                [[ "$arg" == type=* ]] && m_type="${arg#*=}"
-                [[ "$arg" == root_label=* ]] && m_root_label="${arg#*=}"
-                [[ "$arg" == page_label=* ]] && m_page_label="${arg#*=}"
+            local str="$*"
+            while [[ "$str" =~ ([a-zA-Z_]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
+                local key="${BASH_REMATCH[1]}"
+                local val="${BASH_REMATCH[4]:-${BASH_REMATCH[3]:-${BASH_REMATCH[2]}}}"
+                if [[ "$key" == "root" ]]; then m_root="$val"
+                elif [[ "$key" == "depth" ]]; then m_depth="$val"
+                elif [[ "$key" == "type" ]]; then m_type="$val"
+                elif [[ "$key" == "root_label" ]]; then m_root_label="$val"
+                elif [[ "$key" == "page_label" ]]; then m_page_label="$val"
+                elif [[ "$key" == "exclude" ]]; then m_exclude="$val"
+                elif [[ "$key" == "closed" ]]; then m_closed="$val"
+                fi
+                str="${str#*${BASH_REMATCH[0]}}"
             done
             local orig_root="$m_root"
             m_root="${m_root#/}"
@@ -115,7 +121,11 @@ __partials__() {
                     [[ -z "$root_disp" ]] && root_disp="/"
                 fi
                 [[ "$root_disp" != */ ]] && root_disp="${root_disp}/"
-                c_menu+="<li class=\"sidebar-collapsible\"><details open><summary><span class=\"toggle-icon\"></span>${root_disp}</summary>"$'\n'
+                
+                local root_open=" open"
+                if (( m_closed >= 0 && 0 >= m_closed )); then root_open=""; fi
+                
+                c_menu+="<li class=\"sidebar-collapsible\"><details${root_open}><summary><span class=\"toggle-icon\"></span>${root_disp}</summary>"$'\n'
                 c_menu+="<ul class=\"sidebar-ul-inner\">"$'\n'
             fi
             local -A seen=()
@@ -125,8 +135,12 @@ __partials__() {
             mapfile -t raw_sorted_custom < <(
                 local p
                 for p in "${_pages[@]}"; do
-                    echo "${PAGE_WEIGHTS[$p]:-9999999}|$p"
-                done | sort -t'|' -k1,1n -k2,2
+                    local dir_path="${p%.*}"
+                    [[ "$dir_path" == "$p" ]] && dir_path="."
+                    local dw="${PAGE_WEIGHTS[${dir_path}.index]:-9999999}"
+                    [[ "$dw" == "9999999" ]] && dw="${PAGE_WEIGHTS[${dir_path}]:-9999999}"
+                    echo "${dw}|${dir_path}|${PAGE_WEIGHTS[$p]:-9999999}|$p"
+                done | sort -t'|' -k1,1n -k2,2 -k3,3n -k4,4
             )
             local item
             for item in "${raw_sorted_custom[@]}"; do
@@ -139,6 +153,8 @@ __partials__() {
                 [[ -n "$prefix" && "$p" != "${prefix}"* ]] && continue
                 local rem="${p#$prefix}"
                 [[ -z "$rem" ]] && continue
+                
+                [[ -n "$m_exclude" && $p == $m_exclude ]] && continue
                 
                 local prev_IFS="$IFS"
                 IFS='.'
@@ -191,10 +207,10 @@ __partials__() {
                         for cp in "${_pages[@]}"; do
                             if [[ "$cp" == "${node_full}."* ]]; then
                                 local cw="${PAGE_WEIGHTS[$cp]:-9999999}"
-                                if (( cw < best_weight )); then
+                                if (( 10#$cw < 10#$best_weight )); then
                                     best_weight=$cw
                                     best_page=$cp
-                                elif (( cw == best_weight )); then
+                                elif (( 10#$cw == 10#$best_weight )); then
                                     if [[ -z "$best_page" || "$cp" < "$best_page" ]]; then
                                         best_page=$cp
                                     fi
@@ -224,7 +240,14 @@ __partials__() {
                         local dir="${dir_parts[$k]}"
                         local css_class="sidebar-collapsible"
                         [[ $k -gt 0 ]] && css_class="sidebar-collapsible sub-dir"
-                        c_menu+="<li class=\"${css_class}\"><details open><summary><span class=\"toggle-icon\"></span>${dir}/</summary><ul class=\"sidebar-ul-inner\">"$'\n'
+                        
+                        local current_depth=$k
+                        [[ -n "$m_root" || "$orig_root" == "/" ]] && current_depth=$((k + 1))
+                        
+                        local dir_open=" open"
+                        if (( m_closed >= 0 && current_depth >= m_closed )); then dir_open=""; fi
+                        
+                        c_menu+="<li class=\"${css_class}\"><details${dir_open}><summary><span class=\"toggle-icon\"></span>${dir}/</summary><ul class=\"sidebar-ul-inner\">"$'\n'
                     done
                     
                     c_menu+="<li class=\"sidebar-li\"><a href=\"/${page_url}\">${disp_name}</a></li>"$'\n'
@@ -245,7 +268,7 @@ __partials__() {
             printf "%s" "$c_menu"
             return 0
         fi
-        __log "Building Top Menu Tree..." -t info -l wiki
+        
         WIKI_MENU_HTML="<ul class=\"sidebar-ul\">"$'\n'
         local -a sorted_pages=()
         if [ ${#_nested_pages[@]} -gt 0 ]; then
@@ -254,8 +277,10 @@ __partials__() {
                 local p
                 for p in "${_nested_pages[@]}"; do
                     local dir_path="${p%.*}"
-                    echo "${dir_path}|${PAGE_WEIGHTS[$p]:-9999999}|$p"
-                done | sort -t'|' -k1,1 -k2,2n -k3,3
+                    local dw="${PAGE_WEIGHTS[${dir_path}.index]:-9999999}"
+                    [[ "$dw" == "9999999" ]] && dw="${PAGE_WEIGHTS[${dir_path}]:-9999999}"
+                    echo "${dw}|${dir_path}|${PAGE_WEIGHTS[$p]:-9999999}|$p"
+                done | sort -t'|' -k1,1n -k2,2 -k3,3n -k4,4
             )
             local item
             for item in "${raw_sorted[@]}"; do
@@ -283,7 +308,11 @@ __partials__() {
                 local dir="${dir_parts[$i]}"
                 local css_class="sidebar-collapsible"
                 [[ $i -gt 0 ]] && css_class="sidebar-collapsible sub-dir"
-                WIKI_MENU_HTML+="<li class=\"${css_class}\"><details open><summary><span class=\"toggle-icon\"></span>${dir}/</summary><ul class=\"sidebar-ul-inner\">"$'\n'
+                
+                local dir_open=" open"
+                if (( m_closed >= 0 && i >= m_closed )); then dir_open=""; fi
+                
+                WIKI_MENU_HTML+="<li class=\"${css_class}\"><details${dir_open}><summary><span class=\"toggle-icon\"></span>${dir}/</summary><ul class=\"sidebar-ul-inner\">"$'\n'
             done
             local page_url
             if [[ ${#dir_parts[@]} -gt 0 ]]; then
@@ -306,7 +335,8 @@ __partials__() {
             WIKI_MENU_HTML+="</ul></details></li>"$'\n'
         done
         WIKI_MENU_HTML+="</ul>"$'\n'
-    }   
+    }    
+
 
     __partial_search() {
         WIKI_SEARCH_HTML="<div class=\"search-container\">"$'\n'"    <form action=\"/search.html\" method=\"GET\" class=\"search-form\" style=\"display: inline;\">"$'\n'"        <span class=\"search-input-prefix\">search:</span> <input type=\"text\" name=\"q\" id=\"search-input\" autocomplete=\"off\">"$'\n'"    </form>"$'\n'"    <div id=\"search-results\" class=\"search-popup\" style=\"display: none; position: absolute; z-index: 1000;\"></div>"$'\n'"</div>"
@@ -317,14 +347,20 @@ __partials__() {
     }   
 
     __partial_breadcrumb() {
-        local b_label="title"
-        if [[ $# -gt 0 ]]; then
-            local arg
-            for arg in "$@"; do
-                [[ "$arg" == label=* ]] && b_label="${arg#*=}"
-            done
-        fi
-        local out="<breadcrumb><a href=\"/index.html\" class=\"breadcrumb-0\">Home</a>"
+        local b_root_label="Home"
+        local b_page_label="title"
+        local b_sep="/"
+        local str="$*"
+        while [[ "$str" =~ ([a-zA-Z_]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
+            local key="${BASH_REMATCH[1]}"
+            local val="${BASH_REMATCH[4]:-${BASH_REMATCH[3]:-${BASH_REMATCH[2]}}}"
+            if [[ "$key" == "root_label" ]]; then b_root_label="$val"
+            elif [[ "$key" == "page_label" || "$key" == "label" ]]; then b_page_label="$val"
+            elif [[ "$key" == "sep" ]]; then b_sep="$val"
+            fi
+            str="${str#*${BASH_REMATCH[0]}}"
+        done
+        local out="<breadcrumb><a href=\"/index.html\" class=\"breadcrumb-0\">${b_root_label}</a>"
         local -a b_parts=()
         local OIFS="$IFS"; IFS='.'; read -ra b_parts <<< "$pagename"; IFS="$OIFS"
         local cum_slug=""
@@ -333,22 +369,22 @@ __partials__() {
             local part="${b_parts[$i]}"
             if [[ -z "$cum_slug" ]]; then cum_slug="$part"; else cum_slug="${cum_slug}.${part}"; fi
             local b_title=""
-            if [[ "$b_label" == "name" ]]; then
+            if [[ "$b_page_label" == "name" ]]; then
                 b_title="$part"
-            elif [[ "$b_label" == "weight" ]]; then
+            elif [[ "$b_page_label" == "weight" ]]; then
                 b_title="${PAGE_WEIGHTS[$cum_slug]:-9999}"
             else
                 b_title="${PAGE_TITLES[$cum_slug]:-$part}"
             fi
             local b_idx=$((i + 1))
             if [[ $i -eq $((${#b_parts[@]} - 1)) ]]; then
-                out+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${cum_slug//./\/}.html\" class=\"breadcrumb-current\">${b_title}</a>"
+                out+="<span class=\"breadcrumb-sep\">${b_sep}</span><a href=\"/${cum_slug//./\/}.html\" class=\"breadcrumb-current\">${b_title}</a>"
             else
                 local dir_path="${cum_slug//./\/}"
                 if [[ -f "$SOURCEDIR/$dir_path/index.md" ]]; then
-                    out+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${dir_path}/index.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
+                    out+="<span class=\"breadcrumb-sep\">${b_sep}</span><a href=\"/${dir_path}/index.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
                 elif [[ -f "$SOURCEDIR/${dir_path}.md" ]]; then
-                    out+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${dir_path}.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
+                    out+="<span class=\"breadcrumb-sep\">${b_sep}</span><a href=\"/${dir_path}.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
                 else
                     local best_page=""
                     local best_weight=9999999
@@ -359,10 +395,10 @@ __partials__() {
                             if [[ "$remainder" != *.* ]]; then
                                 local w="${PAGE_WEIGHTS[$p]}"
                                 [[ -z "$w" ]] && w=9999999
-                                if (( w < best_weight )); then
+                                if (( 10#$w < 10#$best_weight )); then
                                     best_weight=$w
                                     best_page="$p"
-                                elif (( w == best_weight )); then
+                                elif (( 10#$w == 10#$best_weight )); then
                                     if [[ -z "$best_page" ]] || [[ "$p" < "$best_page" ]]; then
                                         best_page="$p"
                                     fi
@@ -371,16 +407,16 @@ __partials__() {
                         fi
                     done
                     if [[ -n "$best_page" ]]; then
-                        out+="<span class=\"breadcrumb-sep\">/</span><a href=\"/${best_page//./\/}.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
+                        out+="<span class=\"breadcrumb-sep\">${b_sep}</span><a href=\"/${best_page//./\/}.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
                     else
-                        out+="<span class=\"breadcrumb-sep\">/</span><span class=\"breadcrumb-${b_idx}\">${b_title}</span>"
+                        out+="<span class=\"breadcrumb-sep\">${b_sep}</span><span class=\"breadcrumb-${b_idx}\">${b_title}</span>"
                     fi
                 fi
             fi
         done
         out+="</breadcrumb>"
         printf "%s" "$out"
-    }
+    }   
 
     __partial_thumb() {
         WIKI_THUMB_HTML=""
@@ -409,6 +445,15 @@ __partials__() {
     }
 
     __partial_tags() {
+        local t_prefix="tags:"
+        local str="$*"
+        while [[ "$str" =~ ([a-zA-Z_]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
+            local key="${BASH_REMATCH[1]}"
+            local val="${BASH_REMATCH[4]:-${BASH_REMATCH[3]:-${BASH_REMATCH[2]}}}"
+            if [[ "$key" == "prefix" ]]; then t_prefix="$val"; fi
+            str="${str#*${BASH_REMATCH[0]}}"
+        done
+
         WIKI_TAGS_HTML=""
         local in_globals=0 g_line t_tags old_ifs t
         local -a tag_arr
@@ -424,6 +469,7 @@ __partials__() {
                     t_tags="${t_tags%"${t_tags##*[![:space:]]}"}"
                     if [[ -n "$t_tags" ]]; then
                         WIKI_TAGS_HTML="<tags>"$'\n'
+                        WIKI_TAGS_HTML+="<prefix class=\"tags-prefix\">${t_prefix}</prefix>"$'\n'
                         old_ifs="$IFS"
                         IFS=","
                         tag_arr=($t_tags)
@@ -439,5 +485,97 @@ __partials__() {
                 fi
             fi
         done < "$file"
-    }    
+    }
+
+    __partial_related() {
+        local title="" args=""
+        local str="$*"
+        while [[ "$str" =~ ([a-zA-Z_.-]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
+            local key="${BASH_REMATCH[1]}"
+            local val="${BASH_REMATCH[4]:-${BASH_REMATCH[3]:-${BASH_REMATCH[2]}}}"
+            if [[ "$key" == "title" ]]; then
+                title="$val"
+            else
+                args+=" ${key}=\"${val}\""
+            fi
+            str="${str#*${BASH_REMATCH[0]}}"
+        done
+
+        local in_globals=0 g_line
+        while IFS= read -r g_line || [[ -n "$g_line" ]]; do
+            g_line="${g_line%$'\r'}"
+            if (( in_globals == 0 )); then
+                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals=1
+            else
+                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
+                if [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*related:[[:space:]]*(.*)$ ]]; then
+                    local rel_val="${BASH_REMATCH[1]}"
+                    rel_val="${rel_val#"${rel_val%%[![:space:]]*}"}"
+                    rel_val="${rel_val%"${rel_val##*[![:space:]]}"}"
+                    [[ -n "$rel_val" ]] && args+=" ${rel_val}"
+                fi
+            fi
+        done < "$file"
+
+        local out=""
+        [[ -n "$title" ]] && out+="<h1>${title}</h1>"$'\n'
+        out+="$(__listing_pages $args)"
+        printf "%s" "$out"
+    }
+
+    __partial_head() {
+        local h_title="" h_css="" h_js="" h_thumb=""
+        local str="$*"
+        while [[ "$str" =~ ([a-zA-Z_.-]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
+            local key="${BASH_REMATCH[1]}"
+            local val="${BASH_REMATCH[4]:-${BASH_REMATCH[3]:-${BASH_REMATCH[2]}}}"
+            
+            [[ "$val" == page.* ]] && val="${PAGE_VARS[$val]}"
+            
+            if [[ "$key" == "title" ]]; then h_title="$val"
+            elif [[ "$key" == "css" ]]; then h_css="$val"
+            elif [[ "$key" == "js" ]]; then h_js="$val"
+            elif [[ "$key" == "thumb" ]]; then h_thumb="$val"
+            fi
+            str="${str#*${BASH_REMATCH[0]}}"
+        done
+
+        if [[ -n "$h_thumb" && "$h_thumb" != http://* && "$h_thumb" != https://* && "$h_thumb" != /* ]]; then
+            h_thumb="/_static/${h_thumb}"
+        fi
+
+        local out="<meta charset=\"UTF-8\">"$'\n'
+        out+="<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"$'\n'
+        out+="<title>${h_title}</title>"$'\n'
+        out+="<link rel=\"stylesheet\" href=\"${h_css}\">"$'\n'
+        out+="<link rel=\"icon\" type=\"image/png\" href=\"/_static/favicon/favicon-96x96.png\" sizes=\"96x96\">"$'\n'
+        out+="<link rel=\"icon\" type=\"image/svg+xml\" href=\"/_static/favicon/favicon.svg\">"$'\n'
+        out+="<link rel=\"shortcut icon\" href=\"/_static/favicon/favicon.ico\">"$'\n'
+        out+="<link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/_static/favicon/apple-touch-icon.png\">"$'\n'
+        out+="<meta name=\"apple-mobile-web-app-title\" content=\"ximenesyuri\">"$'\n'
+        out+="<link rel=\"manifest\" href=\"/_static/favicon/site.webmanifest\">"$'\n'
+        out+="<script type=\"module\" src=\"${h_js}\"></script>"$'\n'
+
+        if [[ -n "$h_thumb" ]]; then
+            out+="<meta property=\"og:title\" content=\"${h_title}\">"$'\n'
+            out+="<meta property=\"og:image\" content=\"${h_thumb}\">"$'\n'
+            out+="<meta name=\"twitter:card\" content=\"summary_large_image\">"$'\n'
+            out+="<meta name=\"twitter:title\" content=\"${h_title}\">"$'\n'
+            out+="<meta name=\"twitter:image\" content=\"${h_thumb}\">"$'\n'
+        fi
+
+        out+="<script>
+        document.addEventListener('DOMContentLoaded', async function() {
+            if (window.matchMedia(\"(max-width: 768px)\").matches) {
+                document.querySelectorAll('.sidebar-collapsible > details[open]').forEach(function(details){
+                    details.removeAttribute('open');
+                });
+            }
+            wiki.full(true);
+        });
+    </script>"$'\n'
+
+        out+="</head>"
+        printf "%s" "$out"
+    }
 }

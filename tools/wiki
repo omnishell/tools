@@ -7,6 +7,7 @@ __wiki__() {
     __load script helper   --from "$_WIKI_DIR/wiki.d"
     __load script partials --from "$_WIKI_DIR/wiki.d"
     __load script blocks   --from "$_WIKI_DIR/wiki.d"
+    __load script listings --from "$_WIKI_DIR/wiki.d"
     __load script parse    --from "$_WIKI_DIR/wiki.d"
     __load script render   --from "$_WIKI_DIR/wiki.d"
     __load script build    --from "$_WIKI_DIR/wiki.d"
@@ -43,7 +44,7 @@ USAGE:
 
 COMMANDS:
     ls                       List registered wikis
-    new/set                  <wiki> -p/--path <path> [-c <content>] [-d <dist>] [-t <templates>] [-s <static>]
+    new/set                  <wiki> -p/--path <path> [-c <content>] [-d <dist>] [-t <templates>] [-s <static>] [-D <domain>]
     rm                       <wiki>
     pages ls                 <wiki>
     pages new/set            <wiki> -p/--page <page_path> [-t/--template <template>]
@@ -67,6 +68,7 @@ FLAGS:
   -h, --help    Show this help""" >&2
     }
 
+
     __wiki__.ls() {
         declare -p WIKIS >/dev/null 2>&1 || { echo "No wikis registered."; return 0; }
         local w
@@ -79,7 +81,7 @@ FLAGS:
         local w_name="$1"; shift
         if [[ -z "$w_name" ]]; then __log "Missing wiki name." -t error -l wiki; return 1; fi
         
-        local w_path="" w_cont="" w_dist="" w_tmpl="" w_stat=""
+        local w_path="" w_cont="" w_dist="" w_tmpl="" w_stat="" w_domain=""
         while [[ $# -gt 0 ]]; do
             case "$1" in
                 -p|--path) w_path="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
@@ -87,6 +89,7 @@ FLAGS:
                 -d|--dist) w_dist="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
                 -t|--template|--templates) w_tmpl="$2"; shift 2 ;;
                 -s|--static) w_stat="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+                -D|--domain|--url) w_domain="$2"; shift 2 ;;
                 *) shift ;;
             esac
         done
@@ -96,6 +99,7 @@ FLAGS:
             __log "Path (-p) is mandatory for a new wiki." -t error -l wiki; return 1
         fi
         
+        local -A extra_keys=()
         if [[ -z "$current_config" ]]; then
             [[ -n "$w_path" && -z "$w_cont" ]] && w_cont="${w_path}/content"
             [[ -n "$w_path" && -z "$w_dist" ]] && w_dist="${w_path}/dist"
@@ -104,19 +108,27 @@ FLAGS:
         else
             local OIFS="$IFS"; IFS=','
             for pair in $current_config; do
-                k="${pair%%:*}" v="${pair#*:}"
+                local k="${pair%%:*}" v="${pair#*:}"
                 case "$k" in
                     path) [[ -z "$w_path" ]] && w_path="$v" ;;
                     content) [[ -z "$w_cont" ]] && w_cont="$v" ;;
                     dist) [[ -z "$w_dist" ]] && w_dist="$v" ;;
                     template) [[ -z "$w_tmpl" ]] && w_tmpl="$v" ;;
                     static) [[ -z "$w_stat" ]] && w_stat="$v" ;;
+                    domain|url) [[ -z "$w_domain" ]] && w_domain="$v" ;;
+                    *) extra_keys["$k"]="$v" ;;
                 esac
             done
             IFS="$OIFS"
         fi
         
-        WIKI_VARS[$w_name]="path:${w_path},content:${w_cont},dist:${w_dist},template:${w_tmpl},static:${w_stat}"
+        local new_conf="path:${w_path},content:${w_cont},dist:${w_dist},template:${w_tmpl},static:${w_stat}"
+        [[ -n "$w_domain" ]] && new_conf+=",domain:${w_domain}"
+        for k in "${!extra_keys[@]}"; do
+            new_conf+=",${k}:${extra_keys[$k]}"
+        done
+        
+        WIKI_VARS[$w_name]="$new_conf"
         
         local exists=0 w
         for w in "${WIKIS[@]}"; do
@@ -140,7 +152,7 @@ FLAGS:
         
         __save
         __log "Configured wiki: $w_name" -t success -l wiki
-    }
+    }   
 
     __wiki__.rm() {
         local w_name="$1"
@@ -441,7 +453,9 @@ FLAGS:
         __build_cache
         __build_partials
         __build_main
-        __build_index
+        __build_search_index
+        __build_defs_index
+        __build_sitemap
 
         return 0
     }
@@ -581,7 +595,7 @@ FLAGS:
                 ;;
             new|set)
                 if [[ "$cur" == -* ]]; then
-                    COMPREPLY=( $(compgen -W "-p --path -c --contents -d --dist -t --templates --template -s --static" -- "$cur") )
+                    COMPREPLY=( $(compgen -W "-p --path -c --contents -d --dist -t --templates --template -s --static -D --domain --url" -- "$cur") )
                 elif [[ "${COMP_CWORD}" == 2 ]]; then
                     declare -p WIKIS >/dev/null 2>&1 && COMPREPLY=( $(compgen -W "${WIKIS[*]}" -- "$cur") )
                 fi

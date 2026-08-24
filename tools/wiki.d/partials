@@ -86,7 +86,7 @@ __partials__() {
             WIKI_FEATURED_HTML+="<a href=\"${feat_url[$fpage]}\" class=\"menu-item\">${feat_title[$fpage]}</a>"$'\n'
         done
     }
-    
+
     __partial_menu() {
         local m_root="" m_depth="999" m_type="" m_root_label="" m_page_label="title" m_exclude="" m_closed="-1"
         if [[ $# -gt 0 ]]; then
@@ -135,12 +135,30 @@ __partials__() {
             mapfile -t raw_sorted_custom < <(
                 local p
                 for p in "${_pages[@]}"; do
-                    local dir_path="${p%.*}"
-                    [[ "$dir_path" == "$p" ]] && dir_path="."
-                    local dw="${PAGE_WEIGHTS[${dir_path}.index]:-9999999}"
-                    [[ "$dw" == "9999999" ]] && dw="${PAGE_WEIGHTS[${dir_path}]:-9999999}"
-                    echo "${dw}|${dir_path}|${PAGE_WEIGHTS[$p]:-9999999}|$p"
-                done | sort -t'|' -k1,1n -k2,2 -k3,3n -k4,4
+                    local prev_IFS="$IFS"
+                    IFS='.'
+                    local -a parts=($p)
+                    IFS="$prev_IFS"
+                    local sort_key=""
+                    local cum_path=""
+                    for (( i=0; i<${#parts[@]}; i++ )); do
+                        local part="${parts[$i]}"
+                        if [[ -z "$cum_path" ]]; then cum_path="$part"; else cum_path="${cum_path}.${part}"; fi
+                        local w type
+                        if (( i == ${#parts[@]} - 1 )); then
+                            type="0"
+                            w="${PAGE_WEIGHTS[$cum_path]:-9999999}"
+                        else
+                            type="1"
+                            w="${PAGE_WEIGHTS[${cum_path}.index]:-9999999}"
+                            [[ "$w" == "9999999" ]] && w="${PAGE_WEIGHTS[$cum_path]:-9999999}"
+                        fi
+                        w="0000000${w}"
+                        w="${w: -7}"
+                        sort_key+="/${type}_${w}_${part}"
+                    done
+                    echo "${sort_key}|${p}"
+                done | LC_ALL=C sort -t'|' -k1,1
             )
             local item
             for item in "${raw_sorted_custom[@]}"; do
@@ -276,11 +294,30 @@ __partials__() {
             mapfile -t raw_sorted < <(
                 local p
                 for p in "${_nested_pages[@]}"; do
-                    local dir_path="${p%.*}"
-                    local dw="${PAGE_WEIGHTS[${dir_path}.index]:-9999999}"
-                    [[ "$dw" == "9999999" ]] && dw="${PAGE_WEIGHTS[${dir_path}]:-9999999}"
-                    echo "${dw}|${dir_path}|${PAGE_WEIGHTS[$p]:-9999999}|$p"
-                done | sort -t'|' -k1,1n -k2,2 -k3,3n -k4,4
+                    local prev_IFS="$IFS"
+                    IFS='.'
+                    local -a parts=($p)
+                    IFS="$prev_IFS"
+                    local sort_key=""
+                    local cum_path=""
+                    for (( i=0; i<${#parts[@]}; i++ )); do
+                        local part="${parts[$i]}"
+                        if [[ -z "$cum_path" ]]; then cum_path="$part"; else cum_path="${cum_path}.${part}"; fi
+                        local w type
+                        if (( i == ${#parts[@]} - 1 )); then
+                            type="0"
+                            w="${PAGE_WEIGHTS[$cum_path]:-9999999}"
+                        else
+                            type="1"
+                            w="${PAGE_WEIGHTS[${cum_path}.index]:-9999999}"
+                            [[ "$w" == "9999999" ]] && w="${PAGE_WEIGHTS[$cum_path]:-9999999}"
+                        fi
+                        w="0000000${w}"
+                        w="${w: -7}"
+                        sort_key+="/${type}_${w}_${part}"
+                    done
+                    echo "${sort_key}|${p}"
+                done | LC_ALL=C sort -t'|' -k1,1
             )
             local item
             for item in "${raw_sorted[@]}"; do
@@ -335,8 +372,7 @@ __partials__() {
             WIKI_MENU_HTML+="</ul></details></li>"$'\n'
         done
         WIKI_MENU_HTML+="</ul>"$'\n'
-    }    
-
+    }
 
     __partial_search() {
         WIKI_SEARCH_HTML="<div class=\"search-container\">"$'\n'"    <form action=\"/search.html\" method=\"GET\" class=\"search-form\" style=\"display: inline;\">"$'\n'"        <span class=\"search-input-prefix\">search:</span> <input type=\"text\" name=\"q\" id=\"search-input\" autocomplete=\"off\">"$'\n'"    </form>"$'\n'"    <div id=\"search-results\" class=\"search-popup\" style=\"display: none; position: absolute; z-index: 1000;\"></div>"$'\n'"</div>"
@@ -432,7 +468,19 @@ __partials__() {
                     t_img="${t_img#"${t_img%%[![:space:]]*}"}"
                     t_img="${t_img%"${t_img##*[![:space:]]}"}"
                     if [[ -n "$t_img" ]]; then
-                        if [[ "$t_img" != http://* && "$t_img" != https://* && "$t_img" != /* ]]; then
+                        if [[ "$t_img" == "./"* ]]; then
+                            local dir_path="${current_dir//./\/}"
+                            [[ "$dir_path" == "/" ]] && dir_path=""
+                            t_img="/_static${dir_path:+/$dir_path}/${t_img#./}"
+                            t_img="${t_img%.*}.webp"
+                        elif [[ "$t_img" != http://* && "$t_img" != https://* && "$t_img" != /* ]]; then
+                            if [[ "$t_img" != *.* ]]; then
+                                if [[ -f "$BUILDDIR/_static/${t_img}.webp" ]]; then t_img="${t_img}.webp"
+                                elif [[ -f "$BUILDDIR/_static/${t_img}.png" ]]; then t_img="${t_img}.png"
+                                elif [[ -f "$BUILDDIR/_static/${t_img}.jpg" ]]; then t_img="${t_img}.jpg"
+                                elif [[ -f "$BUILDDIR/_static/${t_img}.jpeg" ]]; then t_img="${t_img}.jpeg"
+                                fi
+                            fi
                             t_img="/_static/${t_img}"
                         fi
                         WIKI_THUMB_HTML="<figure class=\"block-image\" style=\"display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;\">"$'\n'
@@ -478,7 +526,7 @@ __partials__() {
                             t="${t#"${t%%[![:space:]]*}"}"
                             t="${t%"${t##*[![:space:]]}"}"
                             [[ -z "$t" ]] && continue
-                            WIKI_TAGS_HTML+="<tag><a href=\"/search.html?q=tag:${t}\">${t}</a></tag>"$'\n'
+                            WIKI_TAGS_HTML+="<tag><a href=\"/etc/search.html?q=tag:${t}\">${t}</a></tag>"$'\n'
                         done
                         WIKI_TAGS_HTML+="</tags>"
                     fi

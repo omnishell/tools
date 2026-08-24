@@ -7,17 +7,21 @@ __listings__() {
         local l_root="$current_dir"
         local l_pattern="*"
         local l_page_label="title"
+        local l_exclude=""
+        local l_depth="0"
         local -A l_globals_and=()
         local -A l_globals_or=()
         local str="$args"
-        
+
         while [[ "$str" =~ ([a-zA-Z0-9_.-]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
             local key="${BASH_REMATCH[1]}"
             local val="${BASH_REMATCH[4]:-${BASH_REMATCH[3]:-${BASH_REMATCH[2]}}}"
             if [[ "$key" == "root" ]]; then l_root="$val"
             elif [[ "$key" == "pattern" ]]; then l_pattern="$val"
             elif [[ "$key" == "page_label" ]]; then l_page_label="$val"
-            elif [[ "$key" == globals.* ]]; then
+            elif [[ "$key" == "exclude" ]]; then l_exclude="$val"
+            elif [[ "$key" == "depth" ]]; then l_depth="$val"
+            else
                 local g_key="${key#globals.}"
                 if [[ "$val" == *" AND "* ]]; then
                     l_globals_and["$g_key"]="$val"
@@ -27,11 +31,11 @@ __listings__() {
             fi
             str="${str#*${BASH_REMATCH[0]}}"
         done
-        
+
         [[ "$l_root" == "." || -z "$l_root" ]] && l_root=""
-        
+
         local list_html="<list class=\"list-pages\">"$'\n'"<ul class=\"list-pages-ul\">"$'\n'
-        
+
         local target_dir="$SOURCEDIR"
         if [[ -n "$l_root" ]]; then
             if [[ "$l_root" == /* ]]; then
@@ -40,19 +44,58 @@ __listings__() {
                 target_dir="$SOURCEDIR/${l_root//./\/}"
             fi
         fi
-        
+
         if [[ -d "$target_dir" ]]; then
             local f
             local force_globals=0
             [[ "$l_page_label" == globals.* ]] && force_globals=1
-            
-            for f in "$target_dir"/$l_pattern; do
+
+            local s_globstar=0
+            shopt -q globstar && s_globstar=1 || shopt -s globstar
+
+            local -a matching_slugs=()
+            local -A file_disp_names=()
+            local -A file_weights=()
+
+            for f in "$target_dir"/**/$l_pattern; do
                 [[ -f "$f" ]] || continue
+
+                local rel_path="${f#$target_dir/}"
+                local slashes="${rel_path//[^\/]/}"
+                if (( l_depth > 0 && ${#slashes} >= l_depth )); then continue; fi
+
+                local fname="${f##*/}"
+                local fname_no_ext="${fname%.*}"
+                if [[ "$fname_no_ext" =~ ^([0-9]+)\.(.+)$ ]]; then
+                    fname_no_ext="${BASH_REMATCH[2]}"
+                fi
+
+                local rel_dir="${rel_path%/*}"
+                [[ "$rel_dir" == "$rel_path" ]] && rel_dir=""
+
+                local slug_key=""
+                if [[ -n "$l_root" ]]; then
+                    slug_key="${l_root//\//.}"
+                    [[ -n "$rel_dir" ]] && slug_key+=".${rel_dir//\//.}"
+                    slug_key+=".${fname_no_ext}"
+                else
+                    slug_key="${rel_dir//\//.}"
+                    [[ -n "$slug_key" ]] && slug_key+="."
+                    slug_key+="${fname_no_ext}"
+                fi
+                slug_key="${slug_key#.}"
+
+                if [[ -n "$l_exclude" ]]; then
+                    if [[ "$slug_key" == $l_exclude || "$fname" == $l_exclude || "${fname%.*}" == $l_exclude || "$fname_no_ext" == $l_exclude ]]; then
+                        continue
+                    fi
+                fi
+
                 local match=1
                 local -A file_globals=()
-                
+
                 if [[ ${#l_globals_and[@]} -gt 0 || ${#l_globals_or[@]} -gt 0 || $force_globals -eq 1 ]]; then
-                    local in_globals=0
+                    local in_globals=0 g_line
                     while IFS= read -r g_line || [[ -n "$g_line" ]]; do
                         g_line="${g_line%$'\r'}"
                         if (( in_globals == 0 )); then
@@ -64,7 +107,7 @@ __listings__() {
                             fi
                         fi
                     done < "$f"
-                    
+
                     if [[ ${#l_globals_and[@]} -gt 0 || ${#l_globals_or[@]} -gt 0 ]]; then
                         local gk actual_v
                         for gk in "${!l_globals_and[@]}"; do
@@ -98,40 +141,131 @@ __listings__() {
                         fi
                     fi
                 fi
+
                 if (( match == 1 )); then
-                    local fname="${f##*/}"
-                    local p_url="" slug_key=""
-                    if [[ -n "$l_root" ]]; then
-                        p_url="${l_root//./\/}/${fname%.*}.html"
-                        slug_key="${l_root//\//.}.${fname%.*}"
-                    else
-                        p_url="${fname%.*}.html"
-                        slug_key="${fname%.*}"
-                    fi
-                    [[ "$p_url" != /* ]] && p_url="/${p_url}"
-                    p_url="${p_url//\/\//\/}"
-                    slug_key="${slug_key#.}"
-                    
                     local disp_name=""
                     if [[ "$l_page_label" == globals.* ]]; then
                         local g_key="${l_page_label#globals.}"
                         disp_name="${file_globals[$g_key]:-}"
                     elif [[ "$l_page_label" == "name" ]]; then
-                        disp_name="${fname%.*}"
+                        disp_name="${fname_no_ext}"
                     elif [[ "$l_page_label" == "weight" ]]; then
                         disp_name="${PAGE_WEIGHTS[$slug_key]:-9999999}"
                     fi
-                    
-                    [[ -z "$disp_name" ]] && disp_name="${PAGE_TITLES[$slug_key]:-${fname%.*}}"
-                    
-                    list_html+="<li class=\"list-pages-li\"><a href=\"$p_url\">$disp_name</a></li>"$'\n'
+
+                    [[ -z "$disp_name" ]] && disp_name="${PAGE_TITLES[$slug_key]:-${fname_no_ext}}"
+
+                    local rel_slug=""
+                    if [[ -n "$rel_dir" ]]; then rel_slug="${rel_dir}/${fname_no_ext}"; else rel_slug="${fname_no_ext}"; fi
+
+                    matching_slugs+=("$rel_slug")
+                    file_disp_names["$rel_slug"]="$disp_name"
+                    file_weights["$rel_slug"]="${PAGE_WEIGHTS[$slug_key]:-9999999}"
                 fi
             done
+            (( s_globstar == 0 )) && shopt -u globstar
+
+            if [[ ${#matching_slugs[@]} -gt 0 ]]; then
+                local -a raw_sorted=()
+                local rel_slug
+                for rel_slug in "${matching_slugs[@]}"; do
+                    local prev_IFS="$IFS"
+                    IFS='/'
+                    local -a parts=($rel_slug)
+                    IFS="$prev_IFS"
+
+                    local sort_key=""
+                    local cum_path=""
+                    local i
+                    for (( i=0; i<${#parts[@]}; i++ )); do
+                        local part="${parts[$i]}"
+                        if [[ -z "$cum_path" ]]; then cum_path="$part"; else cum_path="${cum_path}/${part}"; fi
+
+                        local w type
+                        if (( i == ${#parts[@]} - 1 )); then
+                            type="1"
+                            w="${file_weights[$rel_slug]:-9999999}"
+                        else
+                            type="0"
+                            local dir_slug_key=""
+                            if [[ -n "$l_root" ]]; then dir_slug_key="${l_root//\//.}.${cum_path//\//.}"; else dir_slug_key="${cum_path//\//.}"; fi
+                            dir_slug_key="${dir_slug_key#.}"
+                            w="${PAGE_WEIGHTS[${dir_slug_key}.index]:-9999999}"
+                            [[ "$w" == "9999999" ]] && w="${PAGE_WEIGHTS[$dir_slug_key]:-9999999}"
+                        fi
+                        w="0000000${w}"
+                        w="${w: -7}"
+                        sort_key+="/${type}_${w}_${part}"
+                    done
+                    raw_sorted+=("${sort_key}|${rel_slug}")
+                done
+
+                local -a sorted_slugs=()
+                local line
+                while IFS= read -r line; do
+                    sorted_slugs+=("${line#*|}")
+                done < <(printf "%s\n" "${raw_sorted[@]}" | LC_ALL=C sort -t'|' -k1,1)
+
+                local -a current_path=()
+                for rel_slug in "${sorted_slugs[@]}"; do
+                    local prev_IFS="$IFS"
+                    IFS='/'
+                    local -a parts=($rel_slug)
+                    IFS="$prev_IFS"
+
+                    local page_name="${parts[${#parts[@]}-1]}"
+                    local -a dir_parts=("${parts[@]:0:${#parts[@]}-1}")
+
+                    local common_len=0
+                    while [[ $common_len -lt ${#current_path[@]} && $common_len -lt ${#dir_parts[@]} && "${current_path[$common_len]}" == "${dir_parts[$common_len]}" ]]; do
+                        common_len=$((common_len + 1))
+                    done
+
+                    local i
+                    for (( i=${#current_path[@]}-1; i>=common_len; i-- )); do
+                        list_html+="</ul></li>"$'\n'
+                    done
+
+                    local cum_dir=""
+                    for (( i=common_len; i<${#dir_parts[@]}; i++ )); do
+                        local dir="${dir_parts[$i]}"
+                        if [[ -z "$cum_dir" ]]; then cum_dir="$dir"; else cum_dir="${cum_dir}/${dir}"; fi
+
+                        local dir_slug_key=""
+                        if [[ -n "$l_root" ]]; then dir_slug_key="${l_root//\//.}.${cum_dir//\//.}"; else dir_slug_key="${cum_dir//\//.}"; fi
+                        dir_slug_key="${dir_slug_key#.}"
+
+                        local dir_disp="${PAGE_TITLES[$dir_slug_key]:-$dir}"
+                        [[ "$dir_disp" != */ ]] && dir_disp="${dir_disp}/"
+
+                        list_html+="<li class=\"list-pages-dir\">${dir_disp}<ul class=\"list-pages-ul-inner\">"$'\n'
+                    done
+
+                    local p_url=""
+                    if [[ -n "$l_root" ]]; then
+                        p_url="${l_root//./\/}/${rel_slug}.html"
+                    else
+                        p_url="${rel_slug}.html"
+                    fi
+                    [[ "$p_url" != /* ]] && p_url="/${p_url}"
+                    p_url="${p_url//\/\//\/}"
+
+                    local disp_name="${file_disp_names[$rel_slug]}"
+                    list_html+="<li class=\"list-pages-li\"><a href=\"$p_url\">$disp_name</a></li>"$'\n'
+
+                    current_path=("${dir_parts[@]}")
+                done
+
+                local i
+                for (( i=${#current_path[@]}-1; i>=0; i-- )); do
+                    list_html+="</ul></li>"$'\n'
+                done
+            fi
         fi
         list_html+="</ul>"$'\n'"</list>"
         printf "%s" "$list_html"
     }
-
+    
     __listing_blocks() {
         local b_type="$1"
         shift

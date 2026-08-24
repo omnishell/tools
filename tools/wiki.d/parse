@@ -231,7 +231,6 @@ __parse__() {
         done
     }
 
-
     __parse_block_field() {
         local _field_ref="$1"
         if [[ -z "$_field_ref" ]]; then return; fi
@@ -275,6 +274,7 @@ __parse__() {
         local -a LIST_INDENTS=() LIST_TYPES=()
         while IFS= read -r l || [[ -n "$l" ]]; do
             if (( in_inner == 0 )); then
+                [[ "$l" =~ ^[[:space:]]*::[[:space:]]?(.*)$ ]] && l="${BASH_REMATCH[1]}"
                 if [[ "$l" =~ ^[[:space:]]*\`\`\`([a-zA-Z0-9_+-]*)[[:space:]]*$ ]]; then
                     if (( list_depth > 0 )); then
                         while (( list_depth > 0 )); do
@@ -372,7 +372,6 @@ __parse__() {
                     __parse_refs
                     l="$line"
                     line="$temp_line"
-
                     if (( is_list == 1 )); then
                         local ltype="ul"
                         [[ "$marker" =~ ^[0-9] ]] && ltype="ol"
@@ -422,7 +421,6 @@ __parse__() {
         fi
         printf "%s" "$out"
     }
-
 
     __parse_code() {
         if (( in_code_block == 1 )); then
@@ -557,6 +555,12 @@ __parse__() {
                         local gv="${BASH_REMATCH[2]}"
                         gv="${gv#"${gv%%[![:space:]]*}"}"
                         gv="${gv%"${gv##*[![:space:]]}"}"
+                        if [[ "$gk" == "thumb" && "$gv" == "./"* ]]; then
+                            local dir_path="${current_dir//./\/}"
+                            [[ "$dir_path" == "/" ]] && dir_path=""
+                            gv="/_static${dir_path:+/$dir_path}/${gv#./}"
+                            gv="${gv%.*}.webp"
+                        fi
                         PAGE_VARS["page.$gk"]="$gv"
                     fi
                     return 0
@@ -733,7 +737,7 @@ __parse__() {
         while [[ "$line" =~ \{\{[[:space:]]*list\.pages([[:space:]]+([^}]+))?[[:space:]]*\}\} ]]; do
             local full_match="${BASH_REMATCH[0]}"
             local args="${BASH_REMATCH[2]:-}"
-            local list_html="$(__listing_pages $args)"
+            local list_html="$(__listing_pages "$args")"
             line="${line/"$full_match"/$list_html}"
             matched=1
         done
@@ -742,7 +746,7 @@ __parse__() {
             local full_match="${BASH_REMATCH[0]}"
             local b_type="${BASH_REMATCH[1]}"
             local args="${BASH_REMATCH[3]:-}"
-            local list_html="$(__listing_blocks "$b_type" $args)"
+            local list_html="$(__listing_blocks "$b_type" "$args")"
             line="${line/"$full_match"/$list_html}"
             matched=1
         done
@@ -755,12 +759,11 @@ __parse__() {
             line="${line/"$full_match"/$list_html}"
             matched=1
         done
-
         if (( matched == 1 )); then
             set_ignore_this_turn=1
         fi
     }
-
+    
     __parse_main() {
         local section_count=0
         local -a section_stack=()

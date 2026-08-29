@@ -375,11 +375,18 @@ __partials__() {
     }
 
     __partial_author() {
+        local a_prefix=""
+        local str="$*"
+        while [[ "$str" =~ ([a-zA-Z_.-]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
+            local key="${BASH_REMATCH[1]}"
+            local val="${BASH_REMATCH[4]:-${BASH_REMATCH[3]:-${BASH_REMATCH[2]}}}"
+            if [[ "$key" == "prefix" ]]; then a_prefix="$val"; fi
+            str="${str#*${BASH_REMATCH[0]}}"
+        done
         WIKI_AUTHOR_HTML=""
         local author_val="${PAGE_VARS["page.author"]:-}"
         [[ -z "$author_val" ]] && return
         local a_name="" a_url=""
-        
         if [[ -n "${WIKI_AUTHORS[${w_name}::${author_val}]:-}" ]]; then
             local data="${WIKI_AUTHORS[${w_name}::${author_val}]}"
             [[ "$data" =~ name:\"([^\"]+)\" ]] && a_name="${BASH_REMATCH[1]}"
@@ -391,7 +398,7 @@ __partials__() {
                 a_name="$author_val"
             fi
         fi
-        WIKI_AUTHOR_HTML="<author>"$'\n'"<span class=\"author-prefix\"></span><a class=\"author-link\" href=\"${a_url}\">${a_name}</a>"$'\n'"</author>"
+        WIKI_AUTHOR_HTML="<author>"$'\n'"<span class=\"author-prefix\">${a_prefix}</span><a class=\"author-link\" href=\"${a_url}\">${a_name}</a>"$'\n'"</author>"
     }
 
     __partial_search() {

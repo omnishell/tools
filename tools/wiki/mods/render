@@ -103,6 +103,12 @@ __render__() {
             local custom_head="$(__partial_head $args)"
             rendered="${rendered/"$full_match"/$custom_head}"
         done
+        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?author[[:space:]]+([^}]+)\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local args="${BASH_REMATCH[2]}"
+            __partial_author $args
+            rendered="${rendered/"$full_match"/$WIKI_AUTHOR_HTML}"
+        done
         local search_tags=("{{ page.body }}" "{{page.body}}" "{{ page.name }}" "{{page.name}}" "{{ page.title }}" "{{page.title}}" "{{ wiki.menu }}" "{{wiki.menu}}" "{{ menu }}" "{{menu}}" "{{ wiki.featured }}" "{{wiki.featured}}" "{{ datetime.year }}" "{{datetime.year}}" "{{ datetime.now }}" "{{datetime.now}}" "{{ wiki.search }}" "{{wiki.search}}" "{{ wiki.search_page }}" "{{wiki.search_page}}" "{{ wiki.thumb }}" "{{wiki.thumb}}" "{{ wiki.tags }}" "{{wiki.tags}}" "{{ wiki.author }}" "{{wiki.author}}")
         local year now t_val=""
         printf -v year "%(%Y)T" -1

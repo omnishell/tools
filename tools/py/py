@@ -5,7 +5,7 @@ _PY_DIR_RAW="${BASH_SOURCE[0]%/*}"
 _PY_DIR="$(cd "$_PY_DIR_RAW" && pwd)"
 
 __py__() {
-    __load script helper --from "$_PY_DIR/py.d"
+    __load script helper --from "$_PY_DIR/mods"
 
     __py__.__help__() {
         cat <<'EOF' >&2

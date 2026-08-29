@@ -3,7 +3,7 @@
 _G_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 __g__() {
-    __load script helper --from "$_G_DIR/g.d"
+    __load script helper --from "$_G_DIR/mods"
 
     __g__.__help__() {
         cat <<'EOF' >&2

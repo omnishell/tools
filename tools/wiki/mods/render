@@ -103,15 +103,16 @@ __render__() {
             local custom_head="$(__partial_head $args)"
             rendered="${rendered/"$full_match"/$custom_head}"
         done
-        local search_tags=("{{ page.body }}" "{{page.body}}" "{{ page.name }}" "{{page.name}}" "{{ page.title }}" "{{page.title}}" "{{ wiki.menu }}" "{{wiki.menu}}" "{{ menu }}" "{{menu}}" "{{ wiki.featured }}" "{{wiki.featured}}" "{{ datetime.year }}" "{{datetime.year}}" "{{ datetime.now }}" "{{datetime.now}}" "{{ wiki.search }}" "{{wiki.search}}" "{{ wiki.search_page }}" "{{wiki.search_page}}" "{{ wiki.thumb }}" "{{wiki.thumb}}" "{{ wiki.tags }}" "{{wiki.tags}}")
+        local search_tags=("{{ page.body }}" "{{page.body}}" "{{ page.name }}" "{{page.name}}" "{{ page.title }}" "{{page.title}}" "{{ wiki.menu }}" "{{wiki.menu}}" "{{ menu }}" "{{menu}}" "{{ wiki.featured }}" "{{wiki.featured}}" "{{ datetime.year }}" "{{datetime.year}}" "{{ datetime.now }}" "{{datetime.now}}" "{{ wiki.search }}" "{{wiki.search}}" "{{ wiki.search_page }}" "{{wiki.search_page}}" "{{ wiki.thumb }}" "{{wiki.thumb}}" "{{ wiki.tags }}" "{{wiki.tags}}" "{{ wiki.author }}" "{{wiki.author}}")
         local year now t_val=""
         printf -v year "%(%Y)T" -1
         printf -v now "%(%Y/%m/%d at %H:%M)T" -1
-        local WIKI_SEARCH_HTML="" WIKI_SEARCH_PAGE_HTML="" WIKI_THUMB_HTML="" WIKI_TAGS_HTML=""
+        local WIKI_SEARCH_HTML="" WIKI_SEARCH_PAGE_HTML="" WIKI_THUMB_HTML="" WIKI_TAGS_HTML="" WIKI_AUTHOR_HTML=""
         __partial_search
         __partial_search_page
         __partial_thumb
         __partial_tags
+        __partial_author
         for search in "${search_tags[@]}"; do
             case "$search" in
                 "{{ page.body }}"|"{{page.body}}") t_val="$content" ;;
@@ -127,6 +128,7 @@ __render__() {
                 "{{ wiki.search_page }}"|"{{wiki.search_page}}") t_val="$WIKI_SEARCH_PAGE_HTML" ;;
                 "{{ wiki.thumb }}"|"{{wiki.thumb}}") t_val="$WIKI_THUMB_HTML" ;;
                 "{{ wiki.tags }}"|"{{wiki.tags}}") t_val="$WIKI_TAGS_HTML" ;;
+                "{{ wiki.author }}"|"{{wiki.author}}") t_val="$WIKI_AUTHOR_HTML" ;;
             esac
             rendered="${rendered//"$search"/$t_val}"
         done
@@ -137,7 +139,7 @@ __render__() {
             rendered+="$auto_js"$'\n'
         fi
     }
-
+    
     __render_main() {
         local file="$1" pagename="$2" out_path="$3" current_dir="$4"
         local h_regex='^(#{1,6})\ +(.*)'

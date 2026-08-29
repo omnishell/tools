@@ -2,8 +2,8 @@
 
 __helper__() {
 
-    declare -gA WIKIS WIKI_VARS WIKI_PAGES WIKI_PAGE_VARS WIKI_TEMPLATES WIKI_TEMPLATE_VARS WIKI_TOPICS WIKI_REFS WIKI_BLOCKS 2>/dev/null || true
-        
+    declare -gA WIKIS WIKI_VARS WIKI_PAGES WIKI_PAGE_VARS WIKI_TEMPLATES WIKI_TEMPLATE_VARS WIKI_TOPICS WIKI_REFS WIKI_BLOCKS WIKI_AUTHORS 2>/dev/null || true
+    
     __slugify() {
         local s="${1,,}"
         s="${s// /-}"
@@ -50,6 +50,7 @@ __helper__() {
         declare -p WIKI_TOPICS >/dev/null 2>&1 || declare -g -A WIKI_TOPICS=()
         declare -p WIKI_REFS >/dev/null 2>&1 || declare -g -A WIKI_REFS=()
         declare -p WIKI_BLOCKS >/dev/null 2>&1 || declare -g -A WIKI_BLOCKS=()
+        declare -p WIKI_AUTHORS >/dev/null 2>&1 || declare -g -A WIKI_AUTHORS=()
         if [[ -f "$rcfile" ]]; then
             while IFS= read -r line || [[ -n "$line" ]]; do
                 if [[ "$line" == "declare -a WIKIS="* || \
@@ -60,7 +61,8 @@ __helper__() {
                       "$line" == "declare -A WIKI_TEMPLATE_VARS="* || \
                       "$line" == "declare -A WIKI_TOPICS="* || \
                       "$line" == "declare -A WIKI_REFS="* || \
-                      "$line" == "declare -A WIKI_BLOCKS="* ]]; then
+                      "$line" == "declare -A WIKI_BLOCKS="* || \
+                      "$line" == "declare -A WIKI_AUTHORS="* ]]; then
                     continue
                 fi
                 tmp_content+="$line"$'\n'
@@ -79,8 +81,9 @@ __helper__() {
         tmp_content+="$(__serialize_assoc WIKI_TOPICS)"$'\n'
         tmp_content+="$(__serialize_assoc WIKI_REFS)"$'\n'
         tmp_content+="$(__serialize_assoc WIKI_BLOCKS)"$'\n'
+        tmp_content+="$(__serialize_assoc WIKI_AUTHORS)"$'\n'
         printf "%s" "$tmp_content" > "$rcfile"
-    }
+    }   
 
     __search_index() {
         local plain_content=""

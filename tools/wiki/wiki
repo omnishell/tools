@@ -36,7 +36,7 @@ __wiki__() {
     }
 
     __wiki__.__help__() {
-        echo """ABOUT:
+    echo """ABOUT:
     omni wiki generator and management tool
 
 USAGE:
@@ -61,6 +61,9 @@ COMMANDS:
     block ls                 List custom blocks
     block new/set            <block> -c/--class <class>
     block rm                 <block>
+    author ls                List registered authors
+    author new/set           <author> -w/--wiki <wiki> -n/--name <name> -u/--url <url>
+    author rm                <author>
     build                    <wiki>[.<page>] [--rebuild] [-c] [-d] [-t] [-s] [-C/--cache <dir>]
     serve                    <wiki> [-p/--port <port>]
 
@@ -381,6 +384,41 @@ FLAGS:
         esac
     }
 
+    __wiki__.author() {
+        local subcmd="$1"
+        case "$subcmd" in
+            ls)
+                declare -p WIKI_AUTHORS >/dev/null 2>&1 || return 0
+                local k
+                for k in "${!WIKI_AUTHORS[@]}"; do echo "$k -> ${WIKI_AUTHORS[$k]}"; done
+                ;;
+            new|set)
+                local author="$2"; shift 2
+                [[ -z "$author" ]] && return 1
+                local w_name="" a_name="" a_url=""
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in
+                        -w|--wiki) w_name="$2"; shift 2 ;;
+                        -n|--name) a_name="$2"; shift 2 ;;
+                        -u|--url) a_url="$2"; shift 2 ;;
+                        *) shift ;;
+                    esac
+                done
+                declare -p WIKI_AUTHORS >/dev/null 2>&1 || declare -g -A WIKI_AUTHORS=()
+                WIKI_AUTHORS["${w_name}::${author}"]="name:\"${a_name}\",url:\"${a_url}\""
+                __save
+                ;;
+            rm)
+                local author="$2" k
+                for k in "${!WIKI_AUTHORS[@]}"; do
+                    [[ "$k" == *"::${author}" ]] && unset 'WIKI_AUTHORS[$k]'
+                done
+                __save
+                ;;
+            *) return 1 ;;
+        esac
+    }
+
    
     __wiki__.build() {
         declare -gA SEARCH_INDEX_MAP=() LIST_HTML_MAP=() BLOCK_TITLE_KEYS=()
@@ -548,7 +586,6 @@ FLAGS:
             shopt -u patsub_replacement
             reset_patsub=1
         fi
-
         local cmd="$1"; shift || true
         case "$cmd" in
             ls) __wiki__.ls "$@" ;;
@@ -559,18 +596,19 @@ FLAGS:
             topic) __wiki__.topic "$@" ;;
             ref) __wiki__.ref "$@" ;;
             block) __wiki__.block "$@" ;;
+            author) __wiki__.author "$@" ;;
             build|--rebuild) __wiki__.build "$@" ;;
             serve) __wiki__.serve "$@" ;;
             -h|--help|"") __wiki__.__help__ ;;
             *) __log "Unknown command '$cmd' for wiki." -t error -l wiki; __wiki__.__help__; false ;;
         esac
         local ret=$?
-
         if (( reset_patsub == 1 )); then
             shopt -s patsub_replacement
         fi
         return $ret
-    } 
+    }
+
 
     wiki.__compl__() {
         local cur="${COMP_WORDS[COMP_CWORD]}" prev="${COMP_WORDS[COMP_CWORD-1]}" base_cmd="${COMP_WORDS[1]:-}"
@@ -579,9 +617,8 @@ FLAGS:
             declare -p WIKI_TEMPLATES >/dev/null 2>&1 && COMPREPLY=( $(compgen -W "${WIKI_TEMPLATES[*]}" -- "$cur") )
             return 0
         fi
-
         if [[ "${COMP_CWORD}" == 1 ]]; then
-            COMPREPLY=( $(compgen -W "ls new set rm pages template topic ref block build serve --rebuild --help -h" -- "$cur") )
+            COMPREPLY=( $(compgen -W "ls new set rm pages template topic ref block author build serve --rebuild --help -h" -- "$cur") )
             return 0
         fi
         
@@ -660,6 +697,16 @@ FLAGS:
                 elif [[ "$subcmd" == "new" || "$subcmd" == "set" ]]; then
                     if [[ "$cur" == -* ]]; then
                         COMPREPLY=( $(compgen -W "-c --class" -- "$cur") )
+                    fi
+                fi
+                ;;
+            author)
+                local subcmd="${COMP_WORDS[2]:-}"
+                if [[ "${COMP_CWORD}" == 2 ]]; then
+                    COMPREPLY=( $(compgen -W "ls new set rm" -- "$cur") )
+                elif [[ "$subcmd" == "new" || "$subcmd" == "set" ]]; then
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=( $(compgen -W "-w --wiki -n --name -u --url" -- "$cur") )
                     fi
                 fi
                 ;;

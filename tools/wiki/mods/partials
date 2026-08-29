@@ -374,6 +374,26 @@ __partials__() {
         WIKI_MENU_HTML+="</ul>"$'\n'
     }
 
+    __partial_author() {
+        WIKI_AUTHOR_HTML=""
+        local author_val="${PAGE_VARS["page.author"]:-}"
+        [[ -z "$author_val" ]] && return
+        local a_name="" a_url=""
+        
+        if [[ -n "${WIKI_AUTHORS[${w_name}::${author_val}]:-}" ]]; then
+            local data="${WIKI_AUTHORS[${w_name}::${author_val}]}"
+            [[ "$data" =~ name:\"([^\"]+)\" ]] && a_name="${BASH_REMATCH[1]}"
+            [[ "$data" =~ url:\"([^\"]+)\" ]] && a_url="${BASH_REMATCH[1]}"
+        else
+            [[ "$author_val" =~ name=\"([^\"]+)\" ]] && a_name="${BASH_REMATCH[1]}"
+            [[ "$author_val" =~ url=\"([^\"]+)\" ]] && a_url="${BASH_REMATCH[1]}"
+            if [[ -z "$a_name" ]]; then
+                a_name="$author_val"
+            fi
+        fi
+        WIKI_AUTHOR_HTML="<author>"$'\n'"<span class=\"author-prefix\"></span><a class=\"author-link\" href=\"${a_url}\">${a_name}</a>"$'\n'"</author>"
+    }
+
     __partial_search() {
         WIKI_SEARCH_HTML="<div class=\"search-container\">"$'\n'"    <form action=\"/search.html\" method=\"GET\" class=\"search-form\" style=\"display: inline;\">"$'\n'"        <span class=\"search-input-prefix\">search:</span> <input type=\"text\" name=\"q\" id=\"search-input\" autocomplete=\"off\">"$'\n'"    </form>"$'\n'"    <div id=\"search-results\" class=\"search-popup\" style=\"display: none; position: absolute; z-index: 1000;\"></div>"$'\n'"</div>"
     }

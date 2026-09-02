@@ -10,13 +10,11 @@ __g__() {
 Usage: g <command> [options]
 
 Top-level commands:
-  all           Stage all modified files
   .             Stage files in current directory (or show status if empty)
   ..            Unstage files
   ,             Checkout or create branch
-  info          Show last commit and status
   send          Push variations up to origin
-  change        Manage present changes (info, ls, add, rm, undo, clean)
+  stage        Manage present stages (info, ls, add, rm, undo, clean)
   history       Manage past history (session, join, rename, rm)
   commit        Manage snapshots (new, ls, diff, type, context)
   branch        Manage branches (new, ls, rm, send, rename, rebase, ff, merge, sync)
@@ -36,7 +34,6 @@ EOF
 
         case "$cmd" in
             -h|--help|"") __g__.__help__ ;;
-            all) git add -A ;;
             .) 
                 shift
                 if [[ $# -eq 0 ]]; then
@@ -51,9 +48,9 @@ EOF
                 shift
                 [[ "$1" == "-a" || "$1" == "--all" ]] && { git reset HEAD -- .; return 0; }
                 set -- "rm" "$@"
-                local change_cmd="$1"
+                local stage_cmd="$1"
                 shift || true
-                case "$change_cmd" in
+                case "$stage_cmd" in
                     rm)
                         if [[ "$#" -eq 0 ]]; then
                             local repo_root current_dir staged
@@ -102,12 +99,12 @@ EOF
             git) 
                 shift; git "$@" 
                 ;;
-            change) 
+            stage) 
                 shift
                 local sub="$1"
                 shift || true
                 case "$sub" in
-                    -h|--help|"") echo "Usage: g change {info|ls|add|rm|undo|clean}" >&2; return 0 ;;
+                    -h|--help|"") echo "Usage: g stage {info|ls|add|rm|undo|clean}" >&2; return 0 ;;
                     info) git log -1 --oneline; git status ;;
                     ls|list) git diff --cached --name-only ;;
                     add)
@@ -148,13 +145,13 @@ EOF
                         ;;
                     undo)
                         if [[ $# -eq 0 ]]; then
-                            echo "Usage: g change undo <number>  OR  g change undo <path> [<path>...]" >&2
+                            echo "Usage: g stage undo <number>  OR  g stage undo <path> [<path>...]" >&2
                             return 1
                         fi
                         if [[ $# -eq 1 && "$1" =~ ^[0-9]+$ ]]; then
                             local steps="$1" target_ref="HEAD~$steps"
                             git rev-parse --verify "$target_ref" >/dev/null 2>&1 || return 1
-                            read -r -p "Discard all uncommitted changes and move HEAD back $steps commit(s)? [y/N] " answer
+                            read -r -p "Discard all uncommitted stages and move HEAD back $steps commit(s)? [y/N] " answer
                             case "$answer" in [Yy]*) git reset --hard "$target_ref" ;; *) return 1 ;; esac
                         else
                             git restore -- "$@"
@@ -981,8 +978,8 @@ EOF
         cur="${COMP_WORDS[COMP_CWORD]}"
         prev_word="${COMP_WORDS[COMP_CWORD-1]}"
 
-        local top_level_commands="change history commit branch remote tag conflict git . .. , all info send"
-        local change_subcommands="info ls add rm undo clean --help"
+        local top_level_commands="stage history commit branch remote tag conflict git . .. , all info send"
+        local stage_subcommands="info ls add rm undo clean --help"
         local history_subcommands="session join rename rm --help"
         local branch_subcommands="new ls rm send rename rebase ff merge sync --help"
         local tag_subcommands="new ls rm send edit --help"
@@ -1027,7 +1024,7 @@ EOF
             1) COMPREPLY=( $(compgen -W "${top_level_commands}" -- "${cur}") ) ;;
             2)
                 case "${prev_word}" in
-                    change) COMPREPLY=( $(compgen -W "${change_subcommands}" -- "${cur}") ) ;;
+                    stage) COMPREPLY=( $(compgen -W "${stage_subcommands}" -- "${cur}") ) ;;
                     history) COMPREPLY=( $(compgen -W "${history_subcommands}" -- "${cur}") ) ;;
                     branch)
                         local existing_branches
@@ -1052,7 +1049,7 @@ EOF
             3)
                 local grand_prev_word="${COMP_WORDS[1]}"
                 case "${grand_prev_word}" in
-                    change)
+                    stage)
                         case "${prev_word}" in
                             undo)
                                 local staged_files unstaged_files candidates

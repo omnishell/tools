@@ -328,6 +328,9 @@ __parse__() {
                     while [[ "$l" == *\`*\`* ]]; do
                         prefix="${l%%\`*}"; rest="${l#*\`}"
                         inner="${rest%%\`*}"; suffix="${rest#*\`}"
+                        inner="${inner//&/${_amp:-&amp;}}"
+                        inner="${inner//</${_lt:-&lt;}}"
+                        inner="${inner//>/${_gt:-&gt;}}"
                         l="${prefix}<inline>${inner}</inline>${suffix}"
                     done
                     while [[ "$l" == *"++"*"++"* ]]; do
@@ -421,6 +424,7 @@ __parse__() {
         fi
         printf "%s" "$out"
     }
+
 
     __parse_code() {
         if (( in_code_block == 1 )); then
@@ -570,6 +574,7 @@ __parse__() {
             fi
         else
             if [[ "$line" =~ ^([[:space:]]*)\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
+                (( list_depth > 0 )) && __parse_list
                 content="${content%<br><br>$'\n'}"
                 local curr_indent="${BASH_REMATCH[1]}"
                 local bname="${BASH_REMATCH[2]}"

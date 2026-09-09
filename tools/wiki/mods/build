@@ -8,33 +8,33 @@ __build__() {
             while IFS= read -r -d '' file; do
                 local rel_path="${file#$SOURCEDIR/}"
                 local no_ext="${rel_path%.wiki}"
-
+                
                 local prev_IFS="$IFS"
                 IFS='/'
                 local -a path_parts=($no_ext)
                 IFS="$prev_IFS"
-
+                
                 local clean_slug=""
                 local implicit_weight=""
-
+                
                 local i
                 for ((i=0; i<${#path_parts[@]}; i++)); do
                     local part="${path_parts[$i]}"
                     local part_weight=""
-
+                    
                     if [[ "$part" =~ ^([0-9]+)\.(.+)$ ]]; then
                         part_weight="${BASH_REMATCH[1]}"
                         part="${BASH_REMATCH[2]}"
                     elif [[ "$part" =~ ^([0-9]+)$ ]]; then
                         part_weight="${BASH_REMATCH[1]}"
                     fi
-
+                    
                     if [[ -z "$clean_slug" ]]; then
                         clean_slug="$part"
                     else
                         clean_slug="${clean_slug}.${part}"
                     fi
-
+                    
                     if (( i == ${#path_parts[@]} - 1 )); then
                         implicit_weight="$part_weight"
                     else
@@ -43,7 +43,7 @@ __build__() {
                         fi
                     fi
                 done
-
+                
                 _pages+=("$clean_slug")
                 local var_str="path:${file}"
                 [[ -n "$implicit_weight" ]] && var_str+=",implicit_weight:${implicit_weight}"
@@ -55,7 +55,7 @@ __build__() {
             for p in ${WIKI_PAGES[$w_name]}; do _pages+=("$p"); done
             IFS="$OIFS"
         fi
-
+        
         local p
         for p in "${_pages[@]}"; do
             local p_vars="${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
@@ -68,19 +68,53 @@ __build__() {
                 [[ "$k" == "implicit_weight" ]] && implicit_weight="$v"
             done
             IFS="$OIFS"
-
+            
             if [[ -z "$file" ]]; then
                 file="${p_vars##*path:}"
                 file="${file%%,*}"
             fi
-
+            
+            local rel_path="${file#$SOURCEDIR/}"
+            local no_ext="${rel_path%.*}"
+            
+            local prev_IFS="$IFS"
+            IFS='/'
+            local -a path_parts=($no_ext)
+            IFS="$prev_IFS"
+            
+            local clean_slug=""
+            local i
+            for ((i=0; i<${#path_parts[@]}; i++)); do
+                local part="${path_parts[$i]}"
+                local part_weight=""
+                
+                if [[ "$part" =~ ^([0-9]+)\.(.+)$ ]]; then
+                    part_weight="${BASH_REMATCH[1]}"
+                    part="${BASH_REMATCH[2]}"
+                elif [[ "$part" =~ ^([0-9]+)$ ]]; then
+                    part_weight="${BASH_REMATCH[1]}"
+                fi
+                
+                if [[ -z "$clean_slug" ]]; then
+                    clean_slug="$part"
+                else
+                    clean_slug="${clean_slug}.${part}"
+                fi
+                
+                if (( i < ${#path_parts[@]} - 1 )); then
+                    if [[ -n "$part_weight" && -z "${PAGE_WEIGHTS[$clean_slug]:-}" ]]; then
+                        PAGE_WEIGHTS["$clean_slug"]="$part_weight"
+                    fi
+                fi
+            done
+            
             local fm_title="" fm_weight=""
-
+            
             if [[ -f "$file" ]]; then
                 fm_title="$(__fm_val "$file" "title" || true)"
                 local raw_weight="$(__fm_val "$file" "weight" || true)"
                 [[ -n "$raw_weight" ]] && fm_weight="$raw_weight"
-
+                
                 local in_globals=0 g_line
                 while IFS= read -r g_line || [[ -n "$g_line" ]]; do
                     g_line="${g_line%$'\r'}"
@@ -102,7 +136,7 @@ __build__() {
                     fi
                 done < "$file"
             fi
-
+            
             if [[ -z "$fm_weight" && -n "$implicit_weight" ]]; then
                 fm_weight="$implicit_weight"
             elif [[ -z "$fm_weight" ]]; then
@@ -117,12 +151,12 @@ __build__() {
             elif [[ "$fm_weight" == -* || -n "${fm_weight//[0-9]/}" ]]; then
                 fm_weight="9999999"
             fi
-
+            
             PAGE_TITLES["$p"]="$fm_title"
             if [[ -z "${PAGE_WEIGHTS[$p]:-}" || "$fm_weight" != "9999999" ]]; then
                 PAGE_WEIGHTS["$p"]="$fm_weight"
             fi
-
+            
             local -a parts=()
             local OIFS="$IFS"; IFS='.'; read -ra parts <<< "$p"; IFS="$OIFS"
             if [ "${#parts[@]}" -ge 2 ]; then _nested_pages+=("$p")

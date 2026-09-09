@@ -6,8 +6,9 @@ __build__() {
         if [[ -z "${WIKI_PAGES[$w_name]:-}" ]]; then
             __log "WIKI_PAGES empty for '$w_name'. Building dynamically from '$SOURCEDIR'." -t info -l wiki
             while IFS= read -r -d '' file; do
-                local rel_path="${file#$SOURCEDIR/}"
-                local no_ext="${rel_path%.wiki}"
+                local rel_path="${file#$SOURCEDIR}"
+                rel_path="${rel_path#/}"
+                local no_ext="${rel_path%.*}"
                 
                 local prev_IFS="$IFS"
                 IFS='/'
@@ -74,7 +75,8 @@ __build__() {
                 file="${file%%,*}"
             fi
             
-            local rel_path="${file#$SOURCEDIR/}"
+            local rel_path="${file#$SOURCEDIR}"
+            rel_path="${rel_path#/}"
             local no_ext="${rel_path%.*}"
             
             local prev_IFS="$IFS"

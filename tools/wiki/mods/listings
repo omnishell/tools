@@ -312,7 +312,16 @@ __listings__() {
             done
         fi
         
-        local list_html="<list class=\"list-block-${singular}\">"$'\n'"<ol class=\"list-block-${singular}-files\">"$'\n'
+        local flat_list=0
+        [[ -z "$l_root" ]] && flat_list=1
+        
+        local list_html="<list class=\"list-block-${singular}\">"$'\n'
+        if (( flat_list == 1 )); then
+            list_html+="<ul class=\"list-block-${singular}-ul\">"$'\n'
+        else
+            list_html+="<ol class=\"list-block-${singular}-files\">"$'\n'
+        fi
+        
         local -a target_files=()
         
         if [[ -n "$l_page" ]]; then
@@ -464,12 +473,14 @@ __listings__() {
                             file_html+="            <li class=\"list-block-${singular}-li\"><a href=\"${t_url}#diagram-${item_count_diagram}\">Diagram ${item_count_diagram}</a></li>"$'\n'
                             ((blocks_found++))
                         else
-                            local disp_val=""
+                            local pre_context=""
+                            local link_text=""
                             if [[ "$singular" == "def" ]]; then
-                                disp_val="${first_val}"
-                                [[ -n "$b_context" ]] && disp_val+=" (${b_context})"
+                                link_text="${first_val}"
+                                [[ -n "$b_context" ]] && pre_context="${b_context}: "
                             else
-                                disp_val="${b_entity:-${b_context:+"${b_context} - "}${first_val}}"
+                                link_text="${b_entity:-$first_val}"
+                                [[ -n "$b_context" ]] && pre_context="${b_context}: "
                             fi
                             
                             local raw_id="${block_id:-${b_entity:-$first_val}}"
@@ -480,7 +491,10 @@ __listings__() {
                             fi
                             local anchor_id_slug="${ref_key//./-}"
                             local anchor_id="block-${in_block}-${anchor_id_slug}"
-                            file_html+="            <li class=\"list-block-${singular}-li\"><a href=\"${t_url}#${anchor_id}\">${disp_val:-$anchor_id}</a></li>"$'\n'
+                            
+                            [[ -z "$link_text" ]] && link_text="$anchor_id"
+                            
+                            file_html+="            <li class=\"list-block-${singular}-li\">${pre_context}<a href=\"${t_url}#${anchor_id}\">${link_text}</a></li>"$'\n'
                             ((blocks_found++))
                         fi
                         in_block=""
@@ -502,16 +516,26 @@ __listings__() {
             done < "$t_f"
             
             if (( blocks_found > 0 )); then
-                local display_path="${rel_dir:+$rel_dir/}${fname_no_ext}"
-                list_html+="    <li class=\"list-block-${singular}-file\">${display_path}"$'\n'
-                list_html+="        <ul class=\"list-block-${singular}-ul\">"$'\n'
-                list_html+="${file_html}"
-                list_html+="        </ul>"$'\n'
-                list_html+="    </li>"$'\n'
+                if (( flat_list == 1 )); then
+                    list_html+="${file_html}"
+                else
+                    local display_path="${rel_dir:+$rel_dir/}${fname_no_ext}"
+                    list_html+="    <li class=\"list-block-${singular}-file\">${display_path}"$'\n'
+                    list_html+="        <ul class=\"list-block-${singular}-ul\">"$'\n'
+                    list_html+="${file_html}"
+                    list_html+="        </ul>"$'\n'
+                    list_html+="    </li>"$'\n'
+                fi
             fi
             
         done
-        list_html+="</ol>"$'\n'"</list>"
+        
+        if (( flat_list == 1 )); then
+            list_html+="</ul>"$'\n'
+        else
+            list_html+="</ol>"$'\n'
+        fi
+        list_html+="</list>"
         printf "%s" "$list_html"
     }
 

@@ -187,12 +187,17 @@ __build__() {
         mkdir -p "$BUILDDIR/_static"
         if [ -d "$STATICDIR" ]; then 
             cp -r "$STATICDIR"/* "$BUILDDIR/_static/" 2>/dev/null || true
+        fi
+
+        mkdir -p "$BUILDDIR/_assets"
+        if [ -d "$ASSETSDIR" ]; then
+            cp -r "$ASSETSDIR"/* "$BUILDDIR/_assets/" 2>/dev/null || true
             
             local s_globstar=0 s_nullglob=0
             shopt -q globstar && s_globstar=1 || shopt -s globstar
             shopt -q nullglob && s_nullglob=1 || shopt -s nullglob
             
-            for img in "$BUILDDIR/_static/"**/*.*; do
+            for img in "$BUILDDIR/_assets/"**/*.*; do
                 [[ -f "$img" ]] || continue
                 
                 case "$img" in
@@ -218,7 +223,7 @@ __build__() {
                 [[ -n "$f" ]] && CACHE_HASHES["$f"]="$h"
             done < "$cache_file"
         fi
-    }
+    }   
 
     __build_partials() {
         __partial_featured

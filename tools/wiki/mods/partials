@@ -502,17 +502,17 @@ __partials__() {
                         if [[ "$t_img" == "./"* ]]; then
                             local dir_path="${current_dir//./\/}"
                             [[ "$dir_path" == "/" ]] && dir_path=""
-                            t_img="/_static${dir_path:+/$dir_path}/${t_img#./}"
+                            t_img="/_assets${dir_path:+/$dir_path}/${t_img#./}"
                             t_img="${t_img%.*}.webp"
                         elif [[ "$t_img" != http://* && "$t_img" != https://* && "$t_img" != /* ]]; then
                             if [[ "$t_img" != *.* ]]; then
-                                if [[ -f "$BUILDDIR/_static/${t_img}.webp" ]]; then t_img="${t_img}.webp"
-                                elif [[ -f "$BUILDDIR/_static/${t_img}.png" ]]; then t_img="${t_img}.png"
-                                elif [[ -f "$BUILDDIR/_static/${t_img}.jpg" ]]; then t_img="${t_img}.jpg"
-                                elif [[ -f "$BUILDDIR/_static/${t_img}.jpeg" ]]; then t_img="${t_img}.jpeg"
+                                if [[ -f "$BUILDDIR/_assets/${t_img}.webp" ]]; then t_img="${t_img}.webp"
+                                elif [[ -f "$BUILDDIR/_assets/${t_img}.png" ]]; then t_img="${t_img}.png"
+                                elif [[ -f "$BUILDDIR/_assets/${t_img}.jpg" ]]; then t_img="${t_img}.jpg"
+                                elif [[ -f "$BUILDDIR/_assets/${t_img}.jpeg" ]]; then t_img="${t_img}.jpeg"
                                 fi
                             fi
-                            t_img="/_static/${t_img}"
+                            t_img="/_assets/${t_img}"
                         fi
                         WIKI_THUMB_HTML="<figure class=\"block-image\" style=\"display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;\">"$'\n'
                         WIKI_THUMB_HTML+="    <img src=\"${t_img}\" alt=\"\" class=\"block-image-img\" style=\"width: inherit;\">"$'\n'
@@ -601,7 +601,6 @@ __partials__() {
         out+="$(__listing_pages $args)"
         printf "%s" "$out"
     }
-
     __partial_head() {
         local h_title="" h_css="" h_js="" h_thumb=""
         local str="$*"
@@ -618,11 +617,9 @@ __partials__() {
             fi
             str="${str#*${BASH_REMATCH[0]}}"
         done
-
         if [[ -n "$h_thumb" && "$h_thumb" != http://* && "$h_thumb" != https://* && "$h_thumb" != /* ]]; then
-            h_thumb="/_static/${h_thumb}"
+            h_thumb="/_assets/${h_thumb}"
         fi
-
         local out="<meta charset=\"UTF-8\">"$'\n'
         out+="<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"$'\n'
         out+="<title>${h_title}</title>"$'\n'
@@ -634,7 +631,6 @@ __partials__() {
         out+="<meta name=\"apple-mobile-web-app-title\" content=\"ximenesyuri\">"$'\n'
         out+="<link rel=\"manifest\" href=\"/_static/favicon/site.webmanifest\">"$'\n'
         out+="<script type=\"module\" src=\"${h_js}\"></script>"$'\n'
-
         if [[ -n "$h_thumb" ]]; then
             out+="<meta property=\"og:title\" content=\"${h_title}\">"$'\n'
             out+="<meta property=\"og:image\" content=\"${h_thumb}\">"$'\n'
@@ -642,7 +638,6 @@ __partials__() {
             out+="<meta name=\"twitter:title\" content=\"${h_title}\">"$'\n'
             out+="<meta name=\"twitter:image\" content=\"${h_thumb}\">"$'\n'
         fi
-
         out+="<script>
         document.addEventListener('DOMContentLoaded', async function() {
             if (window.matchMedia(\"(max-width: 768px)\").matches) {
@@ -653,7 +648,6 @@ __partials__() {
             wiki.full(true);
         });
     </script>"$'\n'
-
         out+="</head>"
         printf "%s" "$out"
     }

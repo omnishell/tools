@@ -985,13 +985,13 @@ __blocks__() {
         fi
         if [[ -n "$b_img" && "$b_img" != http://* && "$b_img" != https://* && "$b_img" != /* ]]; then
             if [[ "$b_img" != *.* ]]; then
-                if [[ -f "$BUILDDIR/_static/${b_img}.webp" ]]; then b_img="${b_img}.webp"
-                elif [[ -f "$BUILDDIR/_static/${b_img}.png" ]]; then b_img="${b_img}.png"
-                elif [[ -f "$BUILDDIR/_static/${b_img}.jpg" ]]; then b_img="${b_img}.jpg"
-                elif [[ -f "$BUILDDIR/_static/${b_img}.jpeg" ]]; then b_img="${b_img}.jpeg"
+                if [[ -f "$BUILDDIR/_assets/${b_img}.webp" ]]; then b_img="${b_img}.webp"
+                elif [[ -f "$BUILDDIR/_assets/${b_img}.png" ]]; then b_img="${b_img}.png"
+                elif [[ -f "$BUILDDIR/_assets/${b_img}.jpg" ]]; then b_img="${b_img}.jpg"
+                elif [[ -f "$BUILDDIR/_assets/${b_img}.jpeg" ]]; then b_img="${b_img}.jpeg"
                 fi
             fi
-            b_img="/_static/${b_img}"
+            b_img="/_assets/${b_img}"
         fi
         if [[ -n "$b_align" ]]; then
             b_style="display: flex; flex-direction: column; align-items: ${b_align}; justify-content: ${b_align}; text-align: ${b_align}; ${b_style}"
@@ -1337,13 +1337,13 @@ __blocks__() {
             local cover_src="$c_cover"
             if [[ "$cover_src" != http://* && "$cover_src" != https://* && "$cover_src" != /* ]]; then
                 if [[ "$cover_src" != *.* ]]; then
-                    if [[ -f "$BUILDDIR/_static/${cover_src}.webp" ]]; then cover_src="${cover_src}.webp"
-                    elif [[ -f "$BUILDDIR/_static/${cover_src}.png" ]]; then cover_src="${cover_src}.png"
-                    elif [[ -f "$BUILDDIR/_static/${cover_src}.jpg" ]]; then cover_src="${cover_src}.jpg"
-                    elif [[ -f "$BUILDDIR/_static/${cover_src}.jpeg" ]]; then cover_src="${cover_src}.jpeg"
+                    if [[ -f "$BUILDDIR/_assets/${cover_src}.webp" ]]; then cover_src="${cover_src}.webp"
+                    elif [[ -f "$BUILDDIR/_assets/${cover_src}.png" ]]; then cover_src="${cover_src}.png"
+                    elif [[ -f "$BUILDDIR/_assets/${cover_src}.jpg" ]]; then cover_src="${cover_src}.jpg"
+                    elif [[ -f "$BUILDDIR/_assets/${cover_src}.jpeg" ]]; then cover_src="${cover_src}.jpeg"
                     fi
                 fi
-                cover_src="/_static/${cover_src}"
+                cover_src="/_assets/${cover_src}"
             fi
             html+="    <cover id=\"block-card-cover-${b_id}\" class=\"block-card-cover\">"$'\n'
             html+="        <img id=\"block-card-cover-img-${b_id}\" class=\"block-card-cover-img\" src=\"${cover_src}\"></img>"$'\n'
@@ -1371,7 +1371,8 @@ __blocks__() {
             html+="</card>"$'\n'
             content+="${html}"
         fi
-    }   
+    }
+
 
     __block_row() {
         local bname="$1"

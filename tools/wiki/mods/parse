@@ -562,7 +562,7 @@ __parse__() {
                         if [[ "$gk" == "thumb" && "$gv" == "./"* ]]; then
                             local dir_path="${current_dir//./\/}"
                             [[ "$dir_path" == "/" ]] && dir_path=""
-                            gv="/_static${dir_path:+/$dir_path}/${gv#./}"
+                            gv="/_assets${dir_path:+/$dir_path}/${gv#./}"
                             gv="${gv%.*}.webp"
                         fi
                         PAGE_VARS["page.$gk"]="$gv"

@@ -121,15 +121,15 @@ __partials__() {
                     [[ -z "$root_disp" ]] && root_disp="/"
                 fi
                 [[ "$root_disp" != */ ]] && root_disp="${root_disp}/"
-                                
+                
                 local root_open=" open"
                 if (( m_closed >= 0 && 0 >= m_closed )); then root_open=""; fi
-                                
+                
                 c_menu+="<li class=\"sidebar-collapsible\"><details${root_open}><summary><span class=\"toggle-icon\"></span>${root_disp}</summary>"$'\n'
                 c_menu+="<ul class=\"sidebar-ul-inner\">"$'\n'
             fi
             local -A seen=()
-                        
+            
             local -a sorted_custom_pages=()
             local -a raw_sorted_custom=()
             mapfile -t raw_sorted_custom < <(
@@ -150,10 +150,7 @@ __partials__() {
                             w="${PAGE_WEIGHTS[$cum_path]:-9999999}"
                         else
                             type="1"
-                            w="${PAGE_WEIGHTS[${cum_path}.index]:-9999999}"
-                            if [[ "$w" == "9999999" ]]; then
-                                w="${PAGE_WEIGHTS[$cum_path]:-9999999}"
-                            fi
+                            w="${PAGE_WEIGHTS[$cum_path]:-9999999}"
                             if [[ "$w" == "9999999" && "$part" =~ ^([0-9]+)(\..+)?$ ]]; then
                                 w="${BASH_REMATCH[1]}"
                             fi
@@ -169,23 +166,23 @@ __partials__() {
             for item in "${raw_sorted_custom[@]}"; do
                 sorted_custom_pages+=("${item##*|}")
             done
-                        
+            
             local -a current_path=()
             local p
             for p in "${sorted_custom_pages[@]}"; do
                 [[ -n "$prefix" && "$p" != "${prefix}"* ]] && continue
                 local rem="${p#$prefix}"
                 [[ -z "$rem" ]] && continue
-                                
+                
                 [[ -n "$m_exclude" && $p == $m_exclude ]] && continue
-                                
+                
                 local prev_IFS="$IFS"
                 IFS='.'
                 local -a parts=($rem)
                 IFS="$prev_IFS"
-                                
+                
                 local p_depth=${#parts[@]}
-                                
+                
                 local is_dir=0
                 local target_depth=$p_depth
                 if (( p_depth > m_depth )); then
@@ -197,22 +194,22 @@ __partials__() {
                         if [[ "$i" == "${p}."* ]]; then is_dir=1; break; fi
                     done
                 fi
-                                
+                
                 if [[ "$m_type" == "dir" && $is_dir -eq 0 ]]; then continue; fi
                 if [[ "$m_type" == "file" && $is_dir -eq 1 ]]; then continue; fi
-                                
+                
                 local node_rem=""
                 local j
                 for ((j=0; j<target_depth; j++)); do
                     [[ -n "$node_rem" ]] && node_rem+="."
                     node_rem+="${parts[$j]}"
                 done
-                                
+                
                 local node_full="${prefix}${node_rem}"
                 if [[ -z "${seen[$node_full]:-}" ]]; then
                     seen["$node_full"]="1"
                     local disp_name=""
-                                        
+                    
                     if [[ "$m_page_label" == "weight" ]]; then
                         [[ -n "$node_full" ]] && disp_name="${PAGE_WEIGHTS[$node_full]:-}"
                         [[ -z "$disp_name" ]] && disp_name="9999999"
@@ -222,7 +219,7 @@ __partials__() {
                         [[ -n "$node_full" ]] && disp_name="${PAGE_TITLES[$node_full]:-}"
                         [[ -z "$disp_name" ]] && disp_name="${parts[$((target_depth-1))]}"
                     fi
-                                        
+                    
                     local page_url="${node_full//./\/}.html"
                     if [[ $is_dir -eq 1 ]]; then
                         [[ "$disp_name" != */ ]] && disp_name="${disp_name}/"
@@ -246,44 +243,44 @@ __partials__() {
                             page_url="${node_full//./\/}/index.html"
                         fi
                     fi
-                                        
+                    
                     local -a dir_parts=("${parts[@]:0:$((target_depth-1))}")
-                                        
+                    
                     local common_len=0
                     while [[ $common_len -lt ${#current_path[@]} && $common_len -lt ${#dir_parts[@]} && "${current_path[$common_len]}" == "${dir_parts[$common_len]}" ]]; do
                         common_len=$((common_len + 1))
                     done
-                                        
+                    
                     local k
                     for (( k=${#current_path[@]}-1; k>=common_len; k-- )); do 
                         c_menu+="</ul></details></li>"$'\n'
                     done
-                                        
+                    
                     for (( k=common_len; k<${#dir_parts[@]}; k++ )); do
                         local dir="${dir_parts[$k]}"
                         local css_class="sidebar-collapsible"
                         [[ $k -gt 0 ]] && css_class="sidebar-collapsible sub-dir"
-                                                
+                        
                         local current_depth=$k
                         [[ -n "$m_root" || "$orig_root" == "/" ]] && current_depth=$((k + 1))
-                                                
+                        
                         local dir_open=" open"
                         if (( m_closed >= 0 && current_depth >= m_closed )); then dir_open=""; fi
-                                                
+                        
                         c_menu+="<li class=\"${css_class}\"><details${dir_open}><summary><span class=\"toggle-icon\"></span>${dir}/</summary><ul class=\"sidebar-ul-inner\">"$'\n'
                     done
-                                        
+                    
                     c_menu+="<li class=\"sidebar-li\"><a href=\"/${page_url}\">${disp_name}</a></li>"$'\n'
-                                        
+                    
                     current_path=("${dir_parts[@]}")
                 fi
             done
-                        
+            
             local k
             for (( k=${#current_path[@]}-1; k>=0; k-- )); do 
                 c_menu+="</ul></details></li>"$'\n'
             done
-                        
+            
             if [[ -n "$m_root" || "$orig_root" == "/" ]]; then
                 c_menu+="</ul></details></li>"$'\n'
             fi
@@ -291,7 +288,7 @@ __partials__() {
             printf "%s" "$c_menu"
             return 0
         fi
-                
+        
         WIKI_MENU_HTML="<ul class=\"sidebar-ul\">"$'\n'
         local -a sorted_pages=()
         if [ ${#_nested_pages[@]} -gt 0 ]; then
@@ -314,10 +311,7 @@ __partials__() {
                             w="${PAGE_WEIGHTS[$cum_path]:-9999999}"
                         else
                             type="1"
-                            w="${PAGE_WEIGHTS[${cum_path}.index]:-9999999}"
-                            if [[ "$w" == "9999999" ]]; then
-                                w="${PAGE_WEIGHTS[$cum_path]:-9999999}"
-                            fi
+                            w="${PAGE_WEIGHTS[$cum_path]:-9999999}"
                             if [[ "$w" == "9999999" && "$part" =~ ^([0-9]+)(\..+)?$ ]]; then
                                 w="${BASH_REMATCH[1]}"
                             fi
@@ -355,10 +349,10 @@ __partials__() {
                 local dir="${dir_parts[$i]}"
                 local css_class="sidebar-collapsible"
                 [[ $i -gt 0 ]] && css_class="sidebar-collapsible sub-dir"
-                                
+                
                 local dir_open=" open"
                 if (( m_closed >= 0 && i >= m_closed )); then dir_open=""; fi
-                                
+                
                 WIKI_MENU_HTML+="<li class=\"${css_class}\"><details${dir_open}><summary><span class=\"toggle-icon\"></span>${dir}/</summary><ul class=\"sidebar-ul-inner\">"$'\n'
             done
             local page_url
@@ -382,7 +376,7 @@ __partials__() {
             WIKI_MENU_HTML+="</ul></details></li>"$'\n'
         done
         WIKI_MENU_HTML+="</ul>"$'\n'
-    }
+    }   
 
     __partial_author() {
         local a_prefix=""

@@ -322,7 +322,12 @@ __listings__() {
             elif [[ -f "$t_file" ]]; then target_files+=("$t_file")
             fi
         elif [[ -n "$l_root" ]]; then
-            local t_dir="$SOURCEDIR/${l_root//./\/}"
+            local t_dir="${SOURCEDIR%/}"
+            if [[ "$l_root" == /* ]]; then
+                t_dir="${t_dir}${l_root}"
+            else
+                t_dir="${t_dir}/${l_root//./\/}"
+            fi
             if [[ -d "$t_dir" ]]; then
                 while IFS= read -r -d '' f; do
                     local rel="${f#$t_dir/}"

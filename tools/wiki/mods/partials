@@ -376,7 +376,8 @@ __partials__() {
             WIKI_MENU_HTML+="</ul></details></li>"$'\n'
         done
         WIKI_MENU_HTML+="</ul>"$'\n'
-    }   
+    }
+
 
     __partial_author() {
         local a_prefix=""

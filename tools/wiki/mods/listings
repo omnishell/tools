@@ -26,6 +26,24 @@ __listings__() {
             str="${str#*${BASH_REMATCH[0]}}"
         done
         [[ "$l_root" == "." || -z "$l_root" ]] && l_root=""
+        
+        local clean_l_root_slug=""
+        local clean_l_root_url=""
+        if [[ -n "$l_root" ]]; then
+            local raw_root="${l_root#/}"
+            local old_ifs="$IFS"; IFS='/'; local -a r_parts=(); read -ra r_parts <<< "$raw_root"; IFS="$old_ifs"
+            for p in "${r_parts[@]}"; do
+                if [[ "$p" =~ ^([0-9]+)\.(.+)$ ]]; then
+                    p="${BASH_REMATCH[2]}"
+                fi
+                if [[ -z "$clean_l_root_slug" ]]; then clean_l_root_slug="${p//\//.}"; else clean_l_root_slug="${clean_l_root_slug}.${p//\//.}"; fi
+                
+                local u_part="${p//./\/}"
+                if [[ -z "$clean_l_root_url" ]]; then clean_l_root_url="$u_part"; else clean_l_root_url="${clean_l_root_url}/${u_part}"; fi
+            done
+            [[ "$l_root" == /* ]] && clean_l_root_url="/$clean_l_root_url"
+        fi
+
         local list_html="<list class=\"list-pages\">"$'\n'"<ul class=\"list-pages-ul\">"$'\n'
         local target_dir="$SOURCEDIR"
         if [[ -n "$l_root" ]]; then
@@ -71,7 +89,7 @@ __listings__() {
                         else clean_rel_dir="${clean_rel_dir}/${r_part}"; fi
                         
                         local temp_slug_key=""
-                        if [[ -n "$l_root" ]]; then temp_slug_key="${l_root//\//.}.${clean_rel_dir//\//.}"; else temp_slug_key="${clean_rel_dir//\//.}"; fi
+                        if [[ -n "$clean_l_root_slug" ]]; then temp_slug_key="${clean_l_root_slug}.${clean_rel_dir//\//.}"; else temp_slug_key="${clean_rel_dir//\//.}"; fi
                         temp_slug_key="${temp_slug_key#.}"
                         
                         if [[ "$current_weight" != "9999999" ]]; then
@@ -82,8 +100,8 @@ __listings__() {
                 fi
                 
                 local slug_key=""
-                if [[ -n "$l_root" ]]; then
-                    slug_key="${l_root//\//.}"
+                if [[ -n "$clean_l_root_slug" ]]; then
+                    slug_key="${clean_l_root_slug}"
                     [[ -n "$rel_dir" ]] && slug_key+=".${rel_dir//\//.}"
                     slug_key+=".${fname_no_ext}"
                 else
@@ -210,9 +228,10 @@ __listings__() {
                         else
                             type="0"
                             local dir_slug_key=""
-                            if [[ -n "$l_root" ]]; then dir_slug_key="${l_root//\//.}.${cum_path//\//.}"; else dir_slug_key="${cum_path//\//.}"; fi
+                            if [[ -n "$clean_l_root_slug" ]]; then dir_slug_key="${clean_l_root_slug}.${cum_path//\//.}"; else dir_slug_key="${cum_path//\//.}"; fi
                             dir_slug_key="${dir_slug_key#.}"
-                            w="${dir_implicit_weights[$dir_slug_key]:-9999999}"
+                            w="${PAGE_WEIGHTS[$dir_slug_key]:-9999999}"
+                            [[ "$w" == "9999999" ]] && w="${dir_implicit_weights[$dir_slug_key]:-9999999}"
                         fi
                         w="0000000${w}"
                         w="${w: -7}"
@@ -243,15 +262,15 @@ __listings__() {
                         local dir="${dir_parts[$i]}"
                         if [[ -z "$cum_dir" ]]; then cum_dir="$dir"; else cum_dir="${cum_dir}/${dir}"; fi
                         local dir_slug_key=""
-                        if [[ -n "$l_root" ]]; then dir_slug_key="${l_root//\//.}.${cum_dir//\//.}"; else dir_slug_key="${cum_dir//\//.}"; fi
+                        if [[ -n "$clean_l_root_slug" ]]; then dir_slug_key="${clean_l_root_slug}.${cum_dir//\//.}"; else dir_slug_key="${cum_dir//\//.}"; fi
                         dir_slug_key="${dir_slug_key#.}"
                         local dir_disp="${PAGE_TITLES[$dir_slug_key]:-$dir}"
                         [[ "$dir_disp" != */ ]] && dir_disp="${dir_disp}/"
                         list_html+="<li class=\"list-pages-dir\">${dir_disp}<ul class=\"list-pages-ul-inner\">"$'\n'
                     done
                     local p_url=""
-                    if [[ -n "$l_root" ]]; then
-                        p_url="${l_root//./\/}/${rel_slug}.html"
+                    if [[ -n "$clean_l_root_url" ]]; then
+                        p_url="${clean_l_root_url}/${rel_slug}.html"
                     else
                         p_url="${rel_slug}.html"
                     fi

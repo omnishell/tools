@@ -60,8 +60,7 @@ __listings__() {
                 
                 if [[ -n "$rel_dir" ]]; then
                     local clean_rel_dir=""
-                    local -a r_parts=()
-                    IFS='/' read -ra r_parts <<< "$rel_dir"
+                    local old_ifs="$IFS"; IFS='/'; local -a r_parts=(); read -ra r_parts <<< "$rel_dir"; IFS="$old_ifs"
                     for r_part in "${r_parts[@]}"; do
                         local current_weight="9999999"
                         if [[ "$r_part" =~ ^([0-9]+)\.(.+)$ ]]; then
@@ -98,24 +97,28 @@ __listings__() {
                     local exclude_match=0
                     if [[ "$l_exclude" == *"&&"* ]]; then
                         exclude_match=1
-                        local -a parts=()
-                        IFS="&" read -ra parts <<< "$l_exclude"
+                        local old_ifs="$IFS"; IFS="&"; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
                         for p in "${parts[@]}"; do
-                            p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"
+                            p="${p#"${p%%[! \t]*}"}"; p="${p%"${p##*[! \t]}"}"
                             [[ -z "$p" ]] && continue
-                            if [[ "$slug_key" != $p && "$fname" != $p && "${fname%.*}" != $p && "$fname_no_ext" != $p ]]; then
+                            local matched_p=0
+                            case "$slug_key" in $p) matched_p=1 ;; esac
+                            case "$fname" in $p) matched_p=1 ;; esac
+                            case "${fname%.*}" in $p) matched_p=1 ;; esac
+                            case "$fname_no_ext" in $p) matched_p=1 ;; esac
+                            if (( matched_p == 0 )); then
                                 exclude_match=0; break
                             fi
                         done
                     else
-                        local -a parts=()
-                        IFS="|" read -ra parts <<< "$l_exclude"
+                        local old_ifs="$IFS"; IFS="|"; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
                         for p in "${parts[@]}"; do
-                            p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"
+                            p="${p#"${p%%[! \t]*}"}"; p="${p%"${p##*[! \t]}"}"
                             [[ -z "$p" ]] && continue
-                            if [[ "$slug_key" == $p || "$fname" == $p || "${fname%.*}" == $p || "$fname_no_ext" == $p ]]; then
-                                exclude_match=1; break
-                            fi
+                            case "$slug_key" in $p) exclude_match=1; break ;; esac
+                            case "$fname" in $p) exclude_match=1; break ;; esac
+                            case "${fname%.*}" in $p) exclude_match=1; break ;; esac
+                            case "$fname_no_ext" in $p) exclude_match=1; break ;; esac
                         done
                     fi
                     (( exclude_match == 1 )) && continue
@@ -144,21 +147,24 @@ __listings__() {
                             req_str="${l_globals[$gk]}"
                             
                             if [[ "$req_str" == *"&&"* ]]; then
-                                local -a req_arr=()
-                                IFS="&" read -ra req_arr <<< "$req_str"
+                                local old_ifs="$IFS"; IFS="&"; local -a req_arr=(); read -ra req_arr <<< "$req_str"; IFS="$old_ifs"
                                 for req_v in "${req_arr[@]}"; do
-                                    req_v="${req_v#"${req_v%%[![:space:]]*}"}"; req_v="${req_v%"${req_v##*[![:space:]]}"}"
+                                    req_v="${req_v#"${req_v%%[! \t]*}"}"; req_v="${req_v%"${req_v##*[! \t]}"}"
                                     [[ -z "$req_v" ]] && continue
-                                    if [[ $actual_v != $req_v ]]; then match=0; break; fi
+                                    case "$actual_v" in
+                                        $req_v) ;;
+                                        *) match=0; break ;;
+                                    esac
                                 done
                             else
-                                local -a req_arr=()
-                                IFS="|" read -ra req_arr <<< "$req_str"
+                                local old_ifs="$IFS"; IFS="|"; local -a req_arr=(); read -ra req_arr <<< "$req_str"; IFS="$old_ifs"
                                 local or_match=0
                                 for req_v in "${req_arr[@]}"; do
-                                    req_v="${req_v#"${req_v%%[![:space:]]*}"}"; req_v="${req_v%"${req_v##*[![:space:]]}"}"
+                                    req_v="${req_v#"${req_v%%[! \t]*}"}"; req_v="${req_v%"${req_v##*[! \t]}"}"
                                     [[ -z "$req_v" ]] && continue
-                                    if [[ $actual_v == $req_v ]]; then or_match=1; break; fi
+                                    case "$actual_v" in
+                                        $req_v) or_match=1; break ;;
+                                    esac
                                 done
                                 if (( or_match == 0 )); then match=0; break; fi
                             fi
@@ -189,8 +195,7 @@ __listings__() {
                 local -a raw_sorted=()
                 local rel_slug
                 for rel_slug in "${matching_slugs[@]}"; do
-                    local -a parts=()
-                    IFS='/' read -ra parts <<< "$rel_slug"
+                    local old_ifs="$IFS"; IFS='/'; local -a parts=(); read -ra parts <<< "$rel_slug"; IFS="$old_ifs"
                     
                     local sort_key=""
                     local cum_path=""
@@ -222,8 +227,7 @@ __listings__() {
                 done < <(printf "%s\n" "${raw_sorted[@]}" | LC_ALL=C sort -t'|' -k1,1)
                 local -a current_path=()
                 for rel_slug in "${sorted_slugs[@]}"; do
-                    local -a parts=()
-                    IFS='/' read -ra parts <<< "$rel_slug"
+                    local old_ifs="$IFS"; IFS='/'; local -a parts=(); read -ra parts <<< "$rel_slug"; IFS="$old_ifs"
                     local page_name="${parts[${#parts[@]}-1]}"
                     local -a dir_parts=("${parts[@]:0:${#parts[@]}-1}")
                     local common_len=0

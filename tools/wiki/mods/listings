@@ -317,8 +317,10 @@ __listings__() {
         
         if [[ -n "$l_page" ]]; then
             local t_file="$SOURCEDIR/${l_page//./\/}"
-            [[ "$t_file" != *.md ]] && t_file="${t_file}.md"
-            if [[ -f "$t_file" ]]; then target_files+=("$t_file"); fi
+            if [[ -f "${t_file}.md" ]]; then target_files+=("${t_file}.md")
+            elif [[ -f "${t_file}.wiki" ]]; then target_files+=("${t_file}.wiki")
+            elif [[ -f "$t_file" ]]; then target_files+=("$t_file")
+            fi
         elif [[ -n "$l_root" ]]; then
             local t_dir="$SOURCEDIR/${l_root//./\/}"
             if [[ -d "$t_dir" ]]; then
@@ -328,7 +330,7 @@ __listings__() {
                     if (( ${#d_count} < l_depth )); then
                         target_files+=("$f")
                     fi
-                done < <(find "$t_dir" -type f -name "*.md" -print0)
+                done < <(find "$t_dir" -type f \( -name "*.md" -o -name "*.wiki" \) -print0)
             fi
         else
             target_files+=("$file")
@@ -345,7 +347,6 @@ __listings__() {
         local t_f
         for t_f in "${sorted_target_files[@]}"; do
             local t_rel="${t_f#$SOURCEDIR/}"
-            local t_url="/${t_rel%.md}.html"
             
             local fname="${t_f##*/}"
             local fname_no_ext="${fname%.*}"
@@ -366,6 +367,13 @@ __listings__() {
                     else clean_rel_dir="${clean_rel_dir}/${r_part}"; fi
                 done
                 rel_dir="$clean_rel_dir"
+            fi
+            
+            local t_url=""
+            if [[ -n "$rel_dir" ]]; then
+                t_url="/${rel_dir}/${fname_no_ext}.html"
+            else
+                t_url="/${fname_no_ext}.html"
             fi
             
             local slug_key="${rel_dir//\//.}"

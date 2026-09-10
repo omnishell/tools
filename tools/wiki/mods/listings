@@ -9,8 +9,7 @@ __listings__() {
         local l_page_label="title"
         local l_exclude=""
         local l_depth="0"
-        local -A l_globals_and=()
-        local -A l_globals_or=()
+        local -A l_globals=()
         local str="$args"
         while [[ "$str" =~ ([a-zA-Z0-9_.-]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
             local key="${BASH_REMATCH[1]}"
@@ -22,11 +21,7 @@ __listings__() {
             elif [[ "$key" == "depth" ]]; then l_depth="$val"
             else
                 local g_key="${key#globals.}"
-                if [[ "$val" == *" AND "* ]]; then
-                    l_globals_and["$g_key"]="$val"
-                else
-                    l_globals_or["$g_key"]="$val"
-                fi
+                l_globals["$g_key"]="$val"
             fi
             str="${str#*${BASH_REMATCH[0]}}"
         done
@@ -100,14 +95,35 @@ __listings__() {
                     slug_key+="${fname_no_ext}"
                 fi
                 slug_key="${slug_key#.}"
+                
                 if [[ -n "$l_exclude" ]]; then
-                    if [[ "$slug_key" == $l_exclude || "$fname" == $l_exclude || "${fname%.*}" == $l_exclude || "$fname_no_ext" == $l_exclude ]]; then
-                        continue
+                    local exclude_match=0
+                    if [[ "$l_exclude" == *"&&"* ]]; then
+                        exclude_match=1
+                        local old_ifs="$IFS"; IFS="&"; local -a parts=($l_exclude); IFS="$old_ifs"
+                        for p in "${parts[@]}"; do
+                            p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"
+                            [[ -z "$p" ]] && continue
+                            if [[ "$slug_key" != $p && "$fname" != $p && "${fname%.*}" != $p && "$fname_no_ext" != $p ]]; then
+                                exclude_match=0; break
+                            fi
+                        done
+                    else
+                        local old_ifs="$IFS"; IFS="|"; local -a parts=($l_exclude); IFS="$old_ifs"
+                        for p in "${parts[@]}"; do
+                            p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"
+                            [[ -z "$p" ]] && continue
+                            if [[ "$slug_key" == $p || "$fname" == $p || "${fname%.*}" == $p || "$fname_no_ext" == $p ]]; then
+                                exclude_match=1; break
+                            fi
+                        done
                     fi
+                    (( exclude_match == 1 )) && continue
                 fi
+                
                 local match=1
                 local -A file_globals=()
-                if [[ ${#l_globals_and[@]} -gt 0 || ${#l_globals_or[@]} -gt 0 || $force_globals -eq 1 ]]; then
+                if [[ ${#l_globals[@]} -gt 0 || $force_globals -eq 1 ]]; then
                     local in_globals=0 g_line
                     while IFS= read -r g_line || [[ -n "$g_line" ]]; do
                         g_line="${g_line%$'\r'}"
@@ -120,37 +136,32 @@ __listings__() {
                             fi
                         fi
                     done < "$f"
-                    if [[ ${#l_globals_and[@]} -gt 0 || ${#l_globals_or[@]} -gt 0 ]]; then
-                        local gk actual_v
-                        for gk in "${!l_globals_and[@]}"; do
+                    if [[ ${#l_globals[@]} -gt 0 ]]; then
+                        local gk actual_v req_str
+                        for gk in "${!l_globals[@]}"; do
                             actual_v="${file_globals[$gk]:-}"
                             if [[ -z "$actual_v" ]]; then match=0; break; fi
-                            local old_ifs="$IFS"; IFS=" AND "; local -a req_arr=(${l_globals_and[$gk]}); IFS="$old_ifs"
-                            local req_v
-                            for req_v in "${req_arr[@]}"; do
-                                if [[ "$req_v" != "AND" && -n "${req_v// /}" ]]; then
-                                    req_v="${req_v#"${req_v%%[![:space:]]*}"}"; req_v="${req_v%"${req_v##*[![:space:]]}"}"
-                                    if [[ $actual_v != *$req_v* ]]; then match=0; break; fi
-                                fi
-                            done
-                            (( match == 0 )) && break
-                        done
-                        if (( match == 1 )); then
-                            for gk in "${!l_globals_or[@]}"; do
-                                actual_v="${file_globals[$gk]:-}"
-                                if [[ -z "$actual_v" ]]; then match=0; break; fi
-                                local or_match=0
-                                local old_ifs="$IFS"; IFS=" OR "; local -a req_arr=(${l_globals_or[$gk]}); IFS="$old_ifs"
-                                local req_v
+                            req_str="${l_globals[$gk]}"
+                            
+                            if [[ "$req_str" == *"&&"* ]]; then
+                                local old_ifs="$IFS"; IFS="&"; local -a req_arr=($req_str); IFS="$old_ifs"
                                 for req_v in "${req_arr[@]}"; do
-                                    if [[ "$req_v" != "OR" && -n "${req_v// /}" ]]; then
-                                        req_v="${req_v#"${req_v%%[![:space:]]*}"}"; req_v="${req_v%"${req_v##*[![:space:]]}"}"
-                                        if [[ $actual_v == *$req_v* ]]; then or_match=1; break; fi
-                                    fi
+                                    req_v="${req_v#"${req_v%%[![:space:]]*}"}"; req_v="${req_v%"${req_v##*[![:space:]]}"}"
+                                    [[ -z "$req_v" ]] && continue
+                                    if [[ $actual_v != $req_v ]]; then match=0; break; fi
+                                done
+                            else
+                                local old_ifs="$IFS"; IFS="|"; local -a req_arr=($req_str); IFS="$old_ifs"
+                                local or_match=0
+                                for req_v in "${req_arr[@]}"; do
+                                    req_v="${req_v#"${req_v%%[![:space:]]*}"}"; req_v="${req_v%"${req_v##*[![:space:]]}"}"
+                                    [[ -z "$req_v" ]] && continue
+                                    if [[ $actual_v == $req_v ]]; then or_match=1; break; fi
                                 done
                                 if (( or_match == 0 )); then match=0; break; fi
-                            done
-                        fi
+                            fi
+                            (( match == 0 )) && break
+                        done
                     fi
                 fi
                 if (( match == 1 )); then

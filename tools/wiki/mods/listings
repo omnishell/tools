@@ -49,6 +49,7 @@ __listings__() {
             local -a matching_slugs=()
             local -A file_disp_names=()
             local -A file_weights=()
+            local -A dir_implicit_weights=()
             for f in "$target_dir"/**/$l_pattern; do
                 [[ -f "$f" ]] || continue
                 local rel_path="${f#$target_dir/}"
@@ -69,11 +70,21 @@ __listings__() {
                     local -a r_parts=($rel_dir)
                     IFS="$prev_IFS"
                     for r_part in "${r_parts[@]}"; do
+                        local current_weight="9999999"
                         if [[ "$r_part" =~ ^([0-9]+)\.(.+)$ ]]; then
+                            current_weight="${BASH_REMATCH[1]}"
                             r_part="${BASH_REMATCH[2]}"
                         fi
                         if [[ -z "$clean_rel_dir" ]]; then clean_rel_dir="$r_part"
                         else clean_rel_dir="${clean_rel_dir}/${r_part}"; fi
+                        
+                        local temp_slug_key=""
+                        if [[ -n "$l_root" ]]; then temp_slug_key="${l_root//\//.}.${clean_rel_dir//\//.}"; else temp_slug_key="${clean_rel_dir//\//.}"; fi
+                        temp_slug_key="${temp_slug_key#.}"
+                        
+                        if [[ "$current_weight" != "9999999" ]]; then
+                            dir_implicit_weights["$temp_slug_key"]="$current_weight"
+                        fi
                     done
                     rel_dir="$clean_rel_dir"
                 fi
@@ -170,17 +181,6 @@ __listings__() {
                     local -a parts=($rel_slug)
                     IFS="$prev_IFS"
                     
-                    local orig_rel_dir="${rel_slug%/*}"
-                    [[ "$orig_rel_dir" == "$rel_slug" ]] && orig_rel_dir=""
-                    local -a orig_dir_parts=()
-                    if [[ -n "$orig_rel_dir" ]]; then
-                        local raw_rel_path="${f#$target_dir/}"
-                        local raw_dir="${raw_rel_path%/*}"
-                        IFS='/'
-                        orig_dir_parts=($raw_dir)
-                        IFS="$prev_IFS"
-                    fi
-
                     local sort_key=""
                     local cum_path=""
                     local i
@@ -198,12 +198,7 @@ __listings__() {
                             dir_slug_key="${dir_slug_key#.}"
                             w="${PAGE_WEIGHTS[${dir_slug_key}.index]:-9999999}"
                             [[ "$w" == "9999999" ]] && w="${PAGE_WEIGHTS[$dir_slug_key]:-9999999}"
-                            if [[ "$w" == "9999999" && ${#orig_dir_parts[@]} -gt i ]]; then
-                                local orig_part="${orig_dir_parts[$i]}"
-                                if [[ "$orig_part" =~ ^([0-9]+)\.(.+)$ ]]; then
-                                    w="${BASH_REMATCH[1]}"
-                                fi
-                            fi
+                            [[ "$w" == "9999999" ]] && w="${dir_implicit_weights[$dir_slug_key]:-9999999}"
                         fi
                         w="0000000${w}"
                         w="${w: -7}"

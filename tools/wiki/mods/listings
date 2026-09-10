@@ -169,6 +169,18 @@ __listings__() {
                     IFS='/'
                     local -a parts=($rel_slug)
                     IFS="$prev_IFS"
+                    
+                    local orig_rel_dir="${rel_slug%/*}"
+                    [[ "$orig_rel_dir" == "$rel_slug" ]] && orig_rel_dir=""
+                    local -a orig_dir_parts=()
+                    if [[ -n "$orig_rel_dir" ]]; then
+                        local raw_rel_path="${f#$target_dir/}"
+                        local raw_dir="${raw_rel_path%/*}"
+                        IFS='/'
+                        orig_dir_parts=($raw_dir)
+                        IFS="$prev_IFS"
+                    fi
+
                     local sort_key=""
                     local cum_path=""
                     local i
@@ -186,6 +198,12 @@ __listings__() {
                             dir_slug_key="${dir_slug_key#.}"
                             w="${PAGE_WEIGHTS[${dir_slug_key}.index]:-9999999}"
                             [[ "$w" == "9999999" ]] && w="${PAGE_WEIGHTS[$dir_slug_key]:-9999999}"
+                            if [[ "$w" == "9999999" && ${#orig_dir_parts[@]} -gt i ]]; then
+                                local orig_part="${orig_dir_parts[$i]}"
+                                if [[ "$orig_part" =~ ^([0-9]+)\.(.+)$ ]]; then
+                                    w="${BASH_REMATCH[1]}"
+                                fi
+                            fi
                         fi
                         w="0000000${w}"
                         w="${w: -7}"

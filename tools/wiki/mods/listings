@@ -196,9 +196,7 @@ __listings__() {
                             local dir_slug_key=""
                             if [[ -n "$l_root" ]]; then dir_slug_key="${l_root//\//.}.${cum_path//\//.}"; else dir_slug_key="${cum_path//\//.}"; fi
                             dir_slug_key="${dir_slug_key#.}"
-                            w="${PAGE_WEIGHTS[${dir_slug_key}.index]:-9999999}"
-                            [[ "$w" == "9999999" ]] && w="${PAGE_WEIGHTS[$dir_slug_key]:-9999999}"
-                            [[ "$w" == "9999999" ]] && w="${dir_implicit_weights[$dir_slug_key]:-9999999}"
+                            w="${dir_implicit_weights[$dir_slug_key]:-9999999}"
                         fi
                         w="0000000${w}"
                         w="${w: -7}"

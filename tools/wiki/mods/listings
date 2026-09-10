@@ -294,7 +294,7 @@ __listings__() {
         local b_type="$1"
         shift
         local singular="${b_type%s}"
-        local l_root="" l_depth="999" l_page=""
+        local l_root="" l_depth="999" l_page="" l_exclude=""
         
         if [[ $# -eq 1 && "$1" != *=* ]]; then
             l_page="$1"
@@ -306,14 +306,15 @@ __listings__() {
                 if [[ "$key" == "root" ]]; then l_root="$val"
                 elif [[ "$key" == "depth" ]]; then l_depth="$val"
                 elif [[ "$key" == "page" ]]; then l_page="$val"
+                elif [[ "$key" == "exclude" ]]; then l_exclude="$val"
                 fi
                 str="${str#*${BASH_REMATCH[0]}}"
             done
         fi
-
-        local list_html="<list class=\"list-block-${singular}\">"$'\n'"<ul class=\"list-block-${singular}-ul\">"$'\n'
+        
+        local list_html="<list class=\"list-block-${singular}\">"$'\n'"<ol class=\"list-block-${singular}-files\">"$'\n'
         local -a target_files=()
-
+        
         if [[ -n "$l_page" ]]; then
             local t_file="$SOURCEDIR/${l_page//./\/}"
             [[ "$t_file" != *.md ]] && t_file="${t_file}.md"
@@ -332,15 +333,85 @@ __listings__() {
         else
             target_files+=("$file")
         fi
-
+        
+        local -a sorted_target_files=()
+        if [[ ${#target_files[@]} -gt 0 ]]; then
+            local line
+            while IFS= read -r line; do
+                sorted_target_files+=("$line")
+            done < <(printf "%s\n" "${target_files[@]}" | LC_ALL=C sort)
+        fi
+        
         local t_f
-        for t_f in "${target_files[@]}"; do
+        for t_f in "${sorted_target_files[@]}"; do
             local t_rel="${t_f#$SOURCEDIR/}"
             local t_url="/${t_rel%.md}.html"
+            
+            local fname="${t_f##*/}"
+            local fname_no_ext="${fname%.*}"
+            if [[ "$fname_no_ext" =~ ^([0-9]+)\.(.+)$ ]]; then
+                fname_no_ext="${BASH_REMATCH[2]}"
+            fi
+            local rel_dir="${t_rel%/*}"
+            [[ "$rel_dir" == "$t_rel" ]] && rel_dir=""
+            
+            if [[ -n "$rel_dir" ]]; then
+                local clean_rel_dir=""
+                local old_ifs="$IFS"; IFS='/'; local -a r_parts=(); read -ra r_parts <<< "$rel_dir"; IFS="$old_ifs"
+                for r_part in "${r_parts[@]}"; do
+                    if [[ "$r_part" =~ ^([0-9]+)\.(.+)$ ]]; then
+                        r_part="${BASH_REMATCH[2]}"
+                    fi
+                    if [[ -z "$clean_rel_dir" ]]; then clean_rel_dir="$r_part"
+                    else clean_rel_dir="${clean_rel_dir}/${r_part}"; fi
+                done
+                rel_dir="$clean_rel_dir"
+            fi
+            
+            local slug_key="${rel_dir//\//.}"
+            [[ -n "$slug_key" ]] && slug_key+="."
+            slug_key+="${fname_no_ext}"
+            slug_key="${slug_key#.}"
+            
+            if [[ -n "$l_exclude" ]]; then
+                local exclude_match=0
+                if [[ "$l_exclude" == *"&&"* ]]; then
+                    exclude_match=1
+                    local old_ifs="$IFS"; IFS="&"; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
+                    for p in "${parts[@]}"; do
+                        p="${p#"${p%%[! \t]*}"}"; p="${p%"${p##*[! \t]}"}"
+                        [[ -z "$p" ]] && continue
+                        local matched_p=0
+                        case "$slug_key" in $p) matched_p=1 ;; esac
+                        case "$fname" in $p) matched_p=1 ;; esac
+                        case "${fname%.*}" in $p) matched_p=1 ;; esac
+                        case "$fname_no_ext" in $p) matched_p=1 ;; esac
+                        if (( matched_p == 0 )); then
+                            exclude_match=0; break
+                        fi
+                    done
+                else
+                    local old_ifs="$IFS"; IFS="|"; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
+                    for p in "${parts[@]}"; do
+                        p="${p#"${p%%[! \t]*}"}"; p="${p%"${p##*[! \t]}"}"
+                        [[ -z "$p" ]] && continue
+                        case "$slug_key" in $p) exclude_match=1; break ;; esac
+                        case "$fname" in $p) exclude_match=1; break ;; esac
+                        case "${fname%.*}" in $p) exclude_match=1; break ;; esac
+                        case "$fname_no_ext" in $p) exclude_match=1; break ;; esac
+                    done
+                fi
+                (( exclude_match == 1 )) && continue
+            fi
+
             local in_block="" block_id="" first_key="" first_val=""
             local b_context="" b_entity=""
             local item_count_table=0 item_count_diagram=0
             local -a t_buffer=()
+            
+            local file_html=""
+            local blocks_found=0
+            
             while IFS= read -r t_line || [[ -n "$t_line" ]]; do
                 t_line="${t_line%$'\r'}"
                 if [[ -z "$in_block" ]]; then
@@ -374,11 +445,20 @@ __listings__() {
                                     fi
                                 done
                             fi
-                            list_html+="<li class=\"list-block-${singular}-li\"><a href=\"${t_url}#table-${item_count_table}\">${caption:-Table ${item_count_table}}</a></li>"$'\n'
+                            file_html+="            <li class=\"list-block-${singular}-li\"><a href=\"${t_url}#table-${item_count_table}\">${caption:-Table ${item_count_table}}</a></li>"$'\n'
+                            ((blocks_found++))
                         elif [[ "$in_block" == "diagram" ]]; then
-                            list_html+="<li class=\"list-block-${singular}-li\"><a href=\"${t_url}#diagram-${item_count_diagram}\">Diagram ${item_count_diagram}</a></li>"$'\n'
+                            file_html+="            <li class=\"list-block-${singular}-li\"><a href=\"${t_url}#diagram-${item_count_diagram}\">Diagram ${item_count_diagram}</a></li>"$'\n'
+                            ((blocks_found++))
                         else
-                            local disp_val="${b_entity:-${b_context:+"${b_context} - "}${first_val}}"
+                            local disp_val=""
+                            if [[ "$singular" == "def" ]]; then
+                                disp_val="${first_val}"
+                                [[ -n "$b_context" ]] && disp_val+=" (${b_context})"
+                            else
+                                disp_val="${b_entity:-${b_context:+"${b_context} - "}${first_val}}"
+                            fi
+                            
                             local raw_id="${block_id:-${b_entity:-$first_val}}"
                             local clean_id="$(__slugify "$raw_id")"
                             local ref_key="$clean_id"
@@ -387,7 +467,8 @@ __listings__() {
                             fi
                             local anchor_id_slug="${ref_key//./-}"
                             local anchor_id="block-${in_block}-${anchor_id_slug}"
-                            list_html+="<li class=\"list-block-${singular}-li\"><a href=\"${t_url}#${anchor_id}\">${disp_val:-$anchor_id}</a></li>"$'\n'
+                            file_html+="            <li class=\"list-block-${singular}-li\"><a href=\"${t_url}#${anchor_id}\">${disp_val:-$anchor_id}</a></li>"$'\n'
+                            ((blocks_found++))
                         fi
                         in_block=""
                     else
@@ -406,10 +487,19 @@ __listings__() {
                     fi
                 fi
             done < "$t_f"
+            
+            if (( blocks_found > 0 )); then
+                local display_path="${rel_dir:+$rel_dir/}${fname_no_ext}"
+                list_html+="    <li class=\"list-block-${singular}-file\">${display_path}"$'\n'
+                list_html+="        <ul class=\"list-block-${singular}-ul\">"$'\n'
+                list_html+="${file_html}"
+                list_html+="        </ul>"$'\n'
+                list_html+="    </li>"$'\n'
+            fi
+            
         done
-
-        list_html+="</ul>"$'\n'"</list>"
+        list_html+="</ol>"$'\n'"</list>"
         printf "%s" "$list_html"
     }
-    
+
 }

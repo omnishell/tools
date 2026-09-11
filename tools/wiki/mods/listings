@@ -294,7 +294,7 @@ __listings__() {
         local b_type="$1"
         shift
         local singular="${b_type%s}"
-        local l_root="" l_depth="999" l_page="" l_exclude=""
+        local l_root="" l_depth="999" l_page="" l_exclude="" l_context="false"
         
         if [[ $# -eq 1 && "$1" != *=* ]]; then
             l_page="$1"
@@ -307,6 +307,7 @@ __listings__() {
                 elif [[ "$key" == "depth" ]]; then l_depth="$val"
                 elif [[ "$key" == "page" ]]; then l_page="$val"
                 elif [[ "$key" == "exclude" ]]; then l_exclude="$val"
+                elif [[ "$key" == "context" ]]; then l_context="${val,,}"
                 fi
                 str="${str#*${BASH_REMATCH[0]}}"
             done
@@ -477,10 +478,10 @@ __listings__() {
                             local link_text=""
                             if [[ "$singular" == "def" ]]; then
                                 link_text="${first_val}"
-                                [[ -n "$b_context" ]] && pre_context="${b_context}: "
+                                [[ -n "$b_context" && "$l_context" == "true" ]] && pre_context="${b_context}: "
                             else
                                 link_text="${b_entity:-$first_val}"
-                                [[ -n "$b_context" ]] && pre_context="${b_context}: "
+                                [[ -n "$b_context" && "$l_context" == "true" ]] && pre_context="${b_context}: "
                             fi
                             
                             local raw_id="${block_id:-${b_entity:-$first_val}}"
@@ -537,6 +538,6 @@ __listings__() {
         fi
         list_html+="</list>"
         printf "%s" "$list_html"
-    }
+    }   
 
 }

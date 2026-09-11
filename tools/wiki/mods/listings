@@ -117,7 +117,7 @@ __listings__() {
                         exclude_match=1
                         local old_ifs="$IFS"; IFS="&"; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
                         for p in "${parts[@]}"; do
-                            p="${p#"${p%%[! \t]*}"}"; p="${p%"${p##*[! \t]}"}"
+                            p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"
                             [[ -z "$p" ]] && continue
                             local matched_p=0
                             case "$slug_key" in $p) matched_p=1 ;; esac
@@ -131,7 +131,7 @@ __listings__() {
                     else
                         local old_ifs="$IFS"; IFS="|"; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
                         for p in "${parts[@]}"; do
-                            p="${p#"${p%%[! \t]*}"}"; p="${p%"${p##*[! \t]}"}"
+                            p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"
                             [[ -z "$p" ]] && continue
                             case "$slug_key" in $p) exclude_match=1; break ;; esac
                             case "$fname" in $p) exclude_match=1; break ;; esac
@@ -167,7 +167,7 @@ __listings__() {
                             if [[ "$req_str" == *"&&"* ]]; then
                                 local old_ifs="$IFS"; IFS="&"; local -a req_arr=(); read -ra req_arr <<< "$req_str"; IFS="$old_ifs"
                                 for req_v in "${req_arr[@]}"; do
-                                    req_v="${req_v#"${req_v%%[! \t]*}"}"; req_v="${req_v%"${req_v##*[! \t]}"}"
+                                    req_v="${req_v#"${req_v%%[![:space:]]*}"}"; req_v="${req_v%"${req_v##*[![:space:]]}"}"
                                     [[ -z "$req_v" ]] && continue
                                     case "$actual_v" in
                                         $req_v) ;;
@@ -178,7 +178,7 @@ __listings__() {
                                 local old_ifs="$IFS"; IFS="|"; local -a req_arr=(); read -ra req_arr <<< "$req_str"; IFS="$old_ifs"
                                 local or_match=0
                                 for req_v in "${req_arr[@]}"; do
-                                    req_v="${req_v#"${req_v%%[! \t]*}"}"; req_v="${req_v%"${req_v##*[! \t]}"}"
+                                    req_v="${req_v#"${req_v%%[![:space:]]*}"}"; req_v="${req_v%"${req_v##*[![:space:]]}"}"
                                     [[ -z "$req_v" ]] && continue
                                     case "$actual_v" in
                                         $req_v) or_match=1; break ;;
@@ -289,7 +289,7 @@ __listings__() {
         list_html+="</ul>"$'\n'"</list>"
         printf "%s" "$list_html"
     }
-    
+
     __listing_blocks() {
         local b_type="$1"
         shift
@@ -402,7 +402,7 @@ __listings__() {
                     exclude_match=1
                     local old_ifs="$IFS"; IFS="&"; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
                     for p in "${parts[@]}"; do
-                        p="${p#"${p%%[! \t]*}"}"; p="${p%"${p##*[! \t]}"}"
+                        p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"
                         [[ -z "$p" ]] && continue
                         local matched_p=0
                         case "$slug_key" in $p) matched_p=1 ;; esac
@@ -416,7 +416,7 @@ __listings__() {
                 else
                     local old_ifs="$IFS"; IFS="|"; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
                     for p in "${parts[@]}"; do
-                        p="${p#"${p%%[! \t]*}"}"; p="${p%"${p##*[! \t]}"}"
+                        p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"
                         [[ -z "$p" ]] && continue
                         case "$slug_key" in $p) exclude_match=1; break ;; esac
                         case "$fname" in $p) exclude_match=1; break ;; esac
@@ -538,6 +538,7 @@ __listings__() {
         fi
         list_html+="</list>"
         printf "%s" "$list_html"
-    }   
+    }
+    
 
 }

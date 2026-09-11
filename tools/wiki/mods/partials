@@ -580,7 +580,6 @@ __partials__() {
             fi
             str="${str#*${BASH_REMATCH[0]}}"
         done
-
         local in_globals=0 g_line
         while IFS= read -r g_line || [[ -n "$g_line" ]]; do
             g_line="${g_line%$'\r'}"
@@ -596,12 +595,12 @@ __partials__() {
                 fi
             fi
         done < "$file"
-
         local out=""
         [[ -n "$title" ]] && out+="<h1>${title}</h1>"$'\n'
-        out+="$(__listing_pages $args)"
+        out+="$(__listing_pages "$args")"
         printf "%s" "$out"
     }
+
     __partial_head() {
         local h_title="" h_css="" h_js="" h_thumb=""
         local str="$*"

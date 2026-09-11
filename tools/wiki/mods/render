@@ -78,7 +78,7 @@ __render__() {
             local args="${BASH_REMATCH[2]}"
             local custom_menu=""
             if (( p_menu == 1 )); then
-                custom_menu="$(__partial_menu $args)"
+                custom_menu="$(__partial_menu "$args")"
             fi
             rendered="${rendered/"$full_match"/$custom_menu}"
         done
@@ -87,26 +87,26 @@ __render__() {
             local args="${BASH_REMATCH[2]}"
             local custom_bc=""
             if (( p_breadcrumb == 1 )); then
-                custom_bc="$(__partial_breadcrumb $args)"
+                custom_bc="$(__partial_breadcrumb "$args")"
             fi
             rendered="${rendered/"$full_match"/$custom_bc}"
         done
         while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?related([[:space:]]+([^}]+))?[[:space:]]*\}\} ]]; do
             local full_match="${BASH_REMATCH[0]}"
             local args="${BASH_REMATCH[3]:-}"
-            local custom_related="$(__partial_related $args)"
+            local custom_related="$(__partial_related "$args")"
             rendered="${rendered/"$full_match"/$custom_related}"
         done
         while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?head[[:space:]]+([^}]+)\}\} ]]; do
             local full_match="${BASH_REMATCH[0]}"
             local args="${BASH_REMATCH[2]}"
-            local custom_head="$(__partial_head $args)"
+            local custom_head="$(__partial_head "$args")"
             rendered="${rendered/"$full_match"/$custom_head}"
         done
         while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?author[[:space:]]+([^}]+)\}\} ]]; do
             local full_match="${BASH_REMATCH[0]}"
             local args="${BASH_REMATCH[2]}"
-            __partial_author $args
+            __partial_author "$args"
             rendered="${rendered/"$full_match"/$WIKI_AUTHOR_HTML}"
         done
         local search_tags=("{{ page.body }}" "{{page.body}}" "{{ page.name }}" "{{page.name}}" "{{ page.title }}" "{{page.title}}" "{{ wiki.menu }}" "{{wiki.menu}}" "{{ menu }}" "{{menu}}" "{{ wiki.featured }}" "{{wiki.featured}}" "{{ datetime.year }}" "{{datetime.year}}" "{{ datetime.now }}" "{{datetime.now}}" "{{ wiki.search }}" "{{wiki.search}}" "{{ wiki.search_page }}" "{{wiki.search_page}}" "{{ wiki.thumb }}" "{{wiki.thumb}}" "{{ wiki.tags }}" "{{wiki.tags}}" "{{ wiki.author }}" "{{wiki.author}}")

@@ -597,10 +597,10 @@ __partials__() {
         done < "$file"
         local out=""
         [[ -n "$title" ]] && out+="<h1>${title}</h1>"$'\n'
-        out+="$(__listing_pages "$args")"
+        out+="$(__listing_pages $args)"
         printf "%s" "$out"
     }
-
+    
     __partial_head() {
         local h_title="" h_css="" h_js="" h_thumb=""
         local str="$*"

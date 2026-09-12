@@ -537,6 +537,7 @@ __parse__() {
                 elif [[ "$in_custom_block" == "image" ]]; then __block_image "image" custom_block_buffer
                 elif [[ "$in_custom_block" == "grid" ]]; then __block_grid "grid" custom_block_buffer
                 elif [[ "$in_custom_block" == "plain" ]]; then __block_plain "plain" custom_block_buffer
+                elif [[ "$in_custom_block" == "pre" ]]; then __block_pre "pre" custom_block_buffer
                 elif [[ "$in_custom_block" == "quote" ]]; then __block_quote "quote" custom_block_buffer
                 elif [[ "$in_custom_block" == "globals" || "$in_custom_block" == "comment" ]]; then :
                 elif [[ -n "${WIKI_BLOCKS[$in_custom_block]:-}" ]]; then content+="</div>"$'\n'

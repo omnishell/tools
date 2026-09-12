@@ -904,7 +904,27 @@ __blocks__() {
         local html="<plain style=\"white-space: pre; overflow-x: auto; display: block;\">"$'\n'"${_buffer_ref[*]}"$'\n'"</plain>"$'\n'
         IFS="$old_ifs"
         content+="${html}"
-    }   
+    }
+
+    __block_pre() {
+        local bname="$1"
+        local -n _buffer_ref="$2"
+        
+        if [[ ${#_buffer_ref[@]} -eq 0 ]]; then return; fi
+        
+        local old_ifs="$IFS"
+        IFS=$'\n'
+        local escaped_text="${_buffer_ref[*]}"
+        IFS="$old_ifs"
+        
+        escaped_text="${escaped_text//&/&amp;}"
+        escaped_text="${escaped_text//</&lt;}"
+        escaped_text="${escaped_text//>/&gt;}"
+        
+        local html="<pre class=\"block-pre\" style=\"white-space: pre; overflow-x: auto; display: block;\">"$'\n'"${escaped_text}"$'\n'"</pre>"$'\n'
+        
+        content+="${html}"
+    }
 
     __get_style_attr() {
         local b_width="$1" b_style="$2"

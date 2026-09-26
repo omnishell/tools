@@ -71,7 +71,9 @@ __parse__() {
                 local math_code="${BASH_REMATCH[2]}"
                 local suffix="${BASH_REMATCH[3]}"
                 local svg_output
-                svg_output=$("$_WIKI_DIR/bin/latex" --stdout --inline --dpr 0.4 <<< "$math_code")
+                # SVGs are cropped to the ink, so the baseline moves per formula; a trailing
+                # zero-size \rule is emitted as a <rect> sitting exactly on the baseline
+                svg_output=$("$_WIKI_DIR/bin/latex" --stdout --inline --dpr 0.4 <<< "${math_code}\\rule{0pt}{0pt}")
                 svg_output="${svg_output//rgba(0,0,0,1)/var(--fg)}"
 
                 local min_y=0 height=0
@@ -79,8 +81,12 @@ __parse__() {
                     min_y="${BASH_REMATCH[2]}"
                     height="${BASH_REMATCH[4]}"
                 fi
+                local align="-10px"
+                local baseline_re='.*<rect x="[0-9.-]+" y="([0-9.-]+)" width="0"'
+                # calc does the float math, avoiding a fork per formula; -1px is the svg bottom border
+                [[ "$svg_output" =~ $baseline_re ]] && align="${BASH_REMATCH[1]}pt - (${min_y}pt + ${height}pt) - 1px"
 
-                masked_codes[$m_idx]="<span class=\"latex-inline\" style=\"vertical-align: calc(-10px);\">${svg_output}</span>"
+                masked_codes[$m_idx]="<span class=\"latex-inline\" style=\"vertical-align: calc(${align});\">${svg_output}</span>"
                 line="${prefix}%%MASKED_${m_idx}%%${suffix}"
                 ((m_idx++))
             done

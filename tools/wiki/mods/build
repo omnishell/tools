@@ -223,10 +223,10 @@ __build__() {
 
     __build_cache() {
         mkdir -p "$cache_dir" 2>/dev/null
-        local tmpl_hash=""
-        if [[ -d "$TEMPLATEDIR" ]]; then
-            tmpl_hash=$(find "$TEMPLATEDIR" -type f -exec cksum {} + | cksum | awk '{print $1 "_" $2}')
-        fi
+        # The tool itself is hashed too, so a change to how pages render reaches unchanged pages
+        local tmpl_hash="" hash_dirs=("$_WIKI_DIR/wiki" "$_WIKI_DIR/mods" "$_WIKI_DIR/bin")
+        [[ -d "$TEMPLATEDIR" ]] && hash_dirs+=("$TEMPLATEDIR")
+        tmpl_hash=$(find "${hash_dirs[@]}" -type f -exec cksum {} + | LC_ALL=C sort -k3 | cksum | awk '{print $1 "_" $2}')
         local old_tmpl_hash=""
         [[ -f "$tmpl_cache_file" ]] && old_tmpl_hash=$(<"$tmpl_cache_file")
         if [[ "$tmpl_hash" != "$old_tmpl_hash" ]]; then

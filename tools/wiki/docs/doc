@@ -73,5 +73,7 @@ HTML layouts support Jinja-like placeholders replaced during `wiki build`:
 * `{{ pagename }}`   : The page title.
 * `{{ menu }}`       : The auto-generated sidebar tree (sorted by weight).
 * `{{ featured }}`   : The top-level featured pages menu.
+* `{{ head <args> }}`: The `<head>` boilerplate. Args: `title`, `css` (one URL, or several
+                      comma-separated URLs loaded in order), `js` and `thumb`.
 * `{{ page.<key> }}` : Any custom key defined in the page's frontmatter.
 * `{{ year }}` / `{{ now }}`: Current year / build timestamp.

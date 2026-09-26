@@ -623,7 +623,13 @@ __partials__() {
         local out="<meta charset=\"UTF-8\">"$'\n'
         out+="<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"$'\n'
         out+="<title>${h_title}</title>"$'\n'
-        out+="<link rel=\"stylesheet\" href=\"${h_css}\">"$'\n'
+        local -a h_css_list=()
+        IFS=',' read -ra h_css_list <<< "$h_css"
+        (( ${#h_css_list[@]} )) || h_css_list=("")
+        local h_css_item
+        for h_css_item in "${h_css_list[@]}"; do
+            out+="<link rel=\"stylesheet\" href=\"${h_css_item}\">"$'\n'
+        done
         out+="<link rel=\"icon\" type=\"image/png\" href=\"/_static/favicon/favicon-96x96.png\" sizes=\"96x96\">"$'\n'
         out+="<link rel=\"icon\" type=\"image/svg+xml\" href=\"/_static/favicon/favicon.svg\">"$'\n'
         out+="<link rel=\"shortcut icon\" href=\"/_static/favicon/favicon.ico\">"$'\n'

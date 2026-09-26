@@ -88,7 +88,7 @@ __partials__() {
     }
 
     __partial_menu() {
-        local m_root="" m_depth="999" m_type="" m_root_label="" m_page_label="title" m_exclude="" m_closed="-1"
+        local m_root="" m_depth="999" m_type="" m_root_label="" m_page_label="title" m_exclude="" m_closed="-1" m_open_current="0"
         if [[ $# -gt 0 ]]; then
             local str="$*"
             while [[ "$str" =~ ([a-zA-Z_]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
@@ -101,6 +101,7 @@ __partials__() {
                 elif [[ "$key" == "page_label" ]]; then m_page_label="$val"
                 elif [[ "$key" == "exclude" ]]; then m_exclude="$val"
                 elif [[ "$key" == "closed" ]]; then m_closed="$val"
+                elif [[ "$key" == "open_current" ]]; then m_open_current="$val"
                 fi
                 str="${str#*${BASH_REMATCH[0]}}"
             done
@@ -124,6 +125,7 @@ __partials__() {
                 
                 local root_open=" open"
                 if (( m_closed >= 0 && 0 >= m_closed )); then root_open=""; fi
+                [[ "$m_open_current" == "1" && -n "$pagename" && "$pagename" == "${prefix}"* ]] && root_open=" open"
                 
                 c_menu+="<li class=\"sidebar-collapsible\"><details${root_open}><summary><span class=\"toggle-icon\"></span>${root_disp}</summary>"$'\n'
                 c_menu+="<ul class=\"sidebar-ul-inner\">"$'\n'
@@ -256,6 +258,15 @@ __partials__() {
                         c_menu+="</ul></details></li>"$'\n'
                     done
                     
+                    local -a dir_full=()
+                    if [[ "$m_open_current" == "1" ]]; then
+                        local acc=""
+                        for (( k=0; k<${#dir_parts[@]}; k++ )); do
+                            acc+="${acc:+.}${dir_parts[$k]}"
+                            dir_full[k]="$acc"
+                        done
+                    fi
+                    
                     for (( k=common_len; k<${#dir_parts[@]}; k++ )); do
                         local dir="${dir_parts[$k]}"
                         local css_class="sidebar-collapsible"
@@ -266,11 +277,14 @@ __partials__() {
                         
                         local dir_open=" open"
                         if (( m_closed >= 0 && current_depth >= m_closed )); then dir_open=""; fi
+                        [[ "$m_open_current" == "1" && -n "$pagename" && "$pagename" == "${prefix}${dir_full[$k]}."* ]] && dir_open=" open"
                         
                         c_menu+="<li class=\"${css_class}\"><details${dir_open}><summary><span class=\"toggle-icon\"></span>${dir}/</summary><ul class=\"sidebar-ul-inner\">"$'\n'
                     done
                     
-                    c_menu+="<li class=\"sidebar-li\"><a href=\"/${page_url}\">${disp_name}</a></li>"$'\n'
+                    local current_attr=""
+                    [[ "$m_open_current" == "1" && -n "$pagename" && "$node_full" == "$pagename" ]] && current_attr=" aria-current=\"page\""
+                    c_menu+="<li class=\"sidebar-li\"><a href=\"/${page_url}\"${current_attr}>${disp_name}</a></li>"$'\n'
                     
                     current_path=("${dir_parts[@]}")
                 fi

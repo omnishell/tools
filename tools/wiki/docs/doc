@@ -72,6 +72,10 @@ HTML layouts support Jinja-like placeholders replaced during `wiki build`:
 * `{{ body }}`       : The parsed Markdown content.
 * `{{ pagename }}`   : The page title.
 * `{{ menu }}`       : The auto-generated sidebar tree (sorted by weight).
+* `{{ menu <args> }}`: A per-page sidebar tree. Args: `root`, `depth`, `type` (dir|file),
+                      `root_label`, `page_label` (title|name|weight), `exclude`, `closed` (depth from
+                      which folders start collapsed) and `open_current=1` (keep the current page's
+                      folders open despite `closed`, and mark its link with `aria-current="page"`).
 * `{{ featured }}`   : The top-level featured pages menu.
 * `{{ page.<key> }}` : Any custom key defined in the page's frontmatter.
 * `{{ year }}` / `{{ now }}`: Current year / build timestamp.

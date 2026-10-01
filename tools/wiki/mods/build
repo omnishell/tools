@@ -1,7 +1,6 @@
 #! /bin/bash
 
 __build__() {
-   
     __build_init() {
         if [[ -z "${WIKI_PAGES[$w_name]:-}" ]]; then
             __log "WIKI_PAGES empty for '$w_name'. Building dynamically from '$SOURCEDIR'." -t info -l wiki
@@ -219,11 +218,8 @@ __build__() {
         fi
     } 
 
-
-
     __build_cache() {
         mkdir -p "$cache_dir" 2>/dev/null
-        # The tool itself is hashed too, so a change to how pages render reaches unchanged pages
         local tmpl_hash="" hash_dirs=("$_WIKI_DIR/wiki" "$_WIKI_DIR/mods" "$_WIKI_DIR/bin")
         [[ -d "$TEMPLATEDIR" ]] && hash_dirs+=("$TEMPLATEDIR")
         tmpl_hash=$(find "${hash_dirs[@]}" -type f -exec cksum {} + | LC_ALL=C sort -k3 | cksum | awk '{print $1 "_" $2}')
@@ -251,7 +247,6 @@ __build__() {
         fi
     }
 
-
     __build_partials() {
         __partial_featured
         __partial_menu
@@ -270,7 +265,6 @@ __build__() {
         done
     }
 
-    # Rendered and skipped pages both merge here, so the first page in build order sets a block's title key.
     __build_title_key() {
         [[ -n "$2" && -z "${BLOCK_TITLE_KEYS[$1]:-}" ]] && BLOCK_TITLE_KEYS["$1"]="$2"
         return 0
@@ -280,9 +274,7 @@ __build__() {
         if [[ -n "$p_name" ]]; then build_targets=("$p_name")
         else build_targets=("${_pages[@]}"); fi
         
-        # First line of each cached index file. Entries start with '{', so it cannot clash.
         local title_key_header="title_key="
-        # One cksum for all pages instead of one fork per page
         local -A file_hashes=()
         local -a hash_files=()
         for p in "${build_targets[@]}"; do
@@ -294,7 +286,6 @@ __build__() {
                 [[ "$k" == "path" ]] && file="$v"
             done
             IFS="$OIFS"
-            # cksum does not escape newlines in names; those fall back to a per-file cksum
             [[ -f "$file" && "$file" != *$'\n'* ]] && hash_files+=("$file")
         done
         if (( ${#hash_files[@]} > 0 )); then
@@ -393,7 +384,6 @@ __build__() {
                 file_hash="${file_hash/ /_}"
             fi
             if [[ $force_rebuild -eq 0 && -n "$file_hash" && "${CACHE_HASHES[$file]:-}" == "$file_hash" && -f "$out_path" ]]; then
-                # Every rendered page caches a page entry, so an index without the header predates it: render instead.
                 local -a replay_names=() replay_keys=() replay_chunks=()
                 local replay_ok=1
                 for idx_f in "$cache_dir/$pagename"_index_*.json; do
@@ -443,8 +433,6 @@ __build__() {
                     __build_title_key "$k" "${PAGE_TITLE_KEYS[$k]:-}"
                 fi
             done
-            # Block types the page no longer emits would be replayed on the next skip.
-            # Names with a second _index_ may belong to another page, so they are kept.
             local -a idx_stale=()
             for idx_f in "$cache_dir/$pagename"_index_*.json; do
                 [[ -f "$idx_f" && -z "${idx_written[$idx_f]:-}" ]] || continue
@@ -473,13 +461,11 @@ __build__() {
             if [[ -f "$out_path" ]]; then
                 local html_content
                 html_content="$(<"$out_path")"
-                # Last marker: the injected script follows any quoted in the page body.
                 local pre="${html_content%"$search_marker"*}"
                 if [[ "$html_content" == *"%%WIKI_SEARCH_CONFIG%%"* ]]; then
                     html_content="${html_content//%%WIKI_SEARCH_CONFIG%%/$search_js}"
                     printf "%s" "$html_content" > "$out_path"
                 elif (( ${#pre} < ${#html_content} )); then
-                    # Slice after pre: a leading-* glob trim is quadratic on large pages.
                     local post="${html_content:${#pre}+${#search_marker}}"
                     post="${post#*\];}"
                     html_content="${pre}${search_js}${post}"
@@ -513,15 +499,13 @@ __build__() {
     __build_defs_index() {
         local json_content="{"
         local first=1
-        
         local defs_data="${SEARCH_INDEX_MAP["def"]:-}"
         local line
+        local -A seen_defs=()
         while IFS= read -r line || [[ -n "$line" ]]; do
             line="${line%"${line##*[![:space:]]}"}"
             [[ -z "$line" ]] && continue
-            
             local context="" term="" id="" related="" url=""
-            
             if [[ "$line" =~ \"url\":\"([^\"]*)\" ]]; then
                 url="${BASH_REMATCH[1]}"
             fi
@@ -537,11 +521,9 @@ __build__() {
             if [[ "$line" =~ \"related\":\"([^\"]*)\" ]]; then
                 related="${BASH_REMATCH[1]}"
             fi
-            
             local raw_id="$id"
             [[ -z "$raw_id" ]] && raw_id="$term"
             [[ -z "$raw_id" ]] && continue
-            
             __slugify_r "$raw_id"
             local clean_id="$REPLY"
             local ref_key="$clean_id"
@@ -549,7 +531,10 @@ __build__() {
                 __slugify_r "${context}.${raw_id}"
                 ref_key="$REPLY"
             fi
-            
+            if [[ -n "${seen_defs[$ref_key]:-}" ]]; then
+                continue
+            fi
+            seen_defs["$ref_key"]=1
             local -a rel_arr=()
             if [[ -n "$related" ]]; then
                 local old_ifs="$IFS"
@@ -568,7 +553,6 @@ __build__() {
                     fi
                 done
             fi
-            
             local rel_json=""
             if [[ ${#rel_arr[@]} -gt 0 ]]; then
                 local old_ifs="$IFS"
@@ -576,18 +560,14 @@ __build__() {
                 rel_json="${rel_arr[*]}"
                 IFS="$old_ifs"
             fi
-            
             (( first == 0 )) && json_content+=","
             json_content+=$'\n'"  \"${ref_key}\": { \"url\": \"${url}\", \"deps\": [ ${rel_json} ] }"
             first=0
-            
         done <<< "$defs_data"
-        
         json_content+=$'\n'"}"
-        
         printf "%s\n" "$json_content" > "$BUILDDIR/defs.json"
         __log "Generated defs index -> $BUILDDIR/defs.json" -t success -l wiki
-    }
+    }   
 
     __build_sitemap() {
         local domain=""
@@ -610,9 +590,6 @@ __build__() {
         local xml_content="<?xml version=\"1.0\" encoding=\"UTF-8\"?>"$'\n'
         xml_content+="<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">"$'\n'
         
-        # Last commit date of each source keeps lastmod stable across builds and clones.
-        # Read once for the whole tree.
-        # Git paths are repo-root relative, so page paths are mapped the same way.
         local -A commit_dates=() dirty=()
         local line date="" git_top="" git_shallow="" src_key=""
         { read -r git_top; read -r git_shallow; } < <(git -C "$SOURCEDIR" rev-parse --show-toplevel --is-shallow-repository 2>/dev/null)
@@ -624,7 +601,6 @@ __build__() {
             while IFS= read -r line; do
                 [[ -n "$line" ]] && dirty["$line"]=1
             done < <(git -C "$git_top" -c core.quotepath=off diff --name-only HEAD -- "${src_key:-.}" 2>/dev/null)
-            # Log is newest first, so the first date seen for a file is its latest.
             while IFS= read -r line; do
                 if [[ "$line" == ">"* ]]; then date="${line#>}"
                 elif [[ -n "$line" && -z "${commit_dates[$line]:-}" ]]; then commit_dates["$line"]="$date"
@@ -641,7 +617,6 @@ __build__() {
             file=""
             p_vars="${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
             [[ "$p_vars" =~ (^|,)path:([^,]+) ]] && file="${BASH_REMATCH[2]}"
-            # Sources live under SOURCEDIR. Rebase them onto its repo-root relative path.
             if [[ -n "$file" && "$file" == "$SOURCEDIR"/* ]]; then
                 file="${file#"$SOURCEDIR"/}"
                 [[ -n "$src_key" ]] && file="$src_key/$file"
@@ -649,7 +624,6 @@ __build__() {
                 file=""
             fi
             
-            # Uncommitted, untracked or non-git sources are being changed now, so use today.
             lastmod="$current_date"
             if [[ -n "$file" && -z "${dirty[$file]:-}" && -n "${commit_dates[$file]:-}" ]]; then
                 lastmod="${commit_dates[$file]}"

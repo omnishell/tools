@@ -12,17 +12,17 @@ __helper__() {
     __slugify_r() {
         local s="${1,,}"
         s="${s// /-}"
-        s="${s// /a}"; s="${s// /a}"; s="${s// /a}"; s="${s// /a}"; s="${s// /a}"
-        s="${s// /e}"; s="${s// /e}"; s="${s// /e}"; s="${s// /e}"
-        s="${s// /i}"; s="${s// /i}"; s="${s// /i}"; s="${s// /i}"
-        s="${s// /o}"; s="${s// /o}"; s="${s// /o}"; s="${s// /o}"; s="${s// /o}"
-        s="${s// /u}"; s="${s// /u}"; s="${s// /u}"; s="${s// /u}"
-        s="${s// /c}"; s="${s// /n}"
+        s="${s//$'\xC3\xA1'/a}"; s="${s//$'\xC3\xA0'/a}"; s="${s//$'\xC3\xA3'/a}"; s="${s//$'\xC3\xA2'/a}"; s="${s//$'\xC3\xA4'/a}"
+        s="${s//$'\xC3\xA9'/e}"; s="${s//$'\xC3\xA8'/e}"; s="${s//$'\xC3\xAA'/e}"; s="${s//$'\xC3\xAB'/e}"
+        s="${s//$'\xC3\xAD'/i}"; s="${s//$'\xC3\xAC'/i}"; s="${s//$'\xC3\xAE'/i}"; s="${s//$'\xC3\xAF'/i}"
+        s="${s//$'\xC3\xB3'/o}"; s="${s//$'\xC3\xB2'/o}"; s="${s//$'\xC3\xB5'/o}"; s="${s//$'\xC3\xB4'/o}"; s="${s//$'\xC3\xB6'/o}"
+        s="${s//$'\xC3\xBA'/u}"; s="${s//$'\xC3\xB9'/u}"; s="${s//$'\xC3\xBB'/u}"; s="${s//$'\xC3\xBC'/u}"
+        s="${s//$'\xC3\xA7'/c}"; s="${s//$'\xC3\xB1'/n}"
         s="${s//[^a-z0-9_.-]/}"
-        # Slugs like -n or -ne used to be swallowed as echo options; keep them empty
         [[ "$s" =~ ^-[neE]+$ ]] && s=""
         REPLY="$s"
     }
+   
 
     # Counts characters, not bytes, so widths hold under LC_ALL=C: drops UTF-8 continuation bytes.
     __char_len() {

@@ -283,7 +283,7 @@ __partials__() {
                     done
                     
                     local current_attr=""
-                    [[ "$m_open_current" == "1" && -n "$pagename" && "$node_full" == "$pagename" ]] && current_attr=" aria-current=\"page\""
+                    [[ -n "$pagename" && "$node_full" == "$pagename" ]] && current_attr=" aria-current=\"page\""
                     c_menu+="<li class=\"sidebar-li\"><a href=\"/${page_url}\"${current_attr}>${disp_name}</a></li>"$'\n'
                     
                     current_path=("${dir_parts[@]}")
@@ -382,7 +382,11 @@ __partials__() {
             local disp_name=""
             [[ -n "$entry" ]] && disp_name="${PAGE_TITLES[$entry]:-}"
             [[ -z "$disp_name" ]] && disp_name="$page_name"
-            WIKI_MENU_HTML+="<li class=\"sidebar-li\"><a href=\"/${page_url}\">${disp_name}</a></li>"$'\n'
+            
+            local current_attr=""
+            [[ "$entry" == "$pagename" ]] && current_attr=" aria-current=\"page\""
+            
+            WIKI_MENU_HTML+="<li class=\"sidebar-li\"><a href=\"/${page_url}\"${current_attr}>${disp_name}</a></li>"$'\n'
             current_path=("${dir_parts[@]}")
         done
         local i
@@ -391,6 +395,7 @@ __partials__() {
         done
         WIKI_MENU_HTML+="</ul>"$'\n'
     }
+   
 
 
     __partial_author() {

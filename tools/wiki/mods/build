@@ -497,45 +497,36 @@ __build__() {
     }
 
     __build_defs_index() {
-        local json_content="{"
-        local first=1
         local defs_data="${SEARCH_INDEX_MAP["def"]:-}"
         local line
-        local -A seen_defs=()
+        local -A defs_urls=()
+        local -A defs_deps_list=()
+        local -A seen_deps=()
+        
         while IFS= read -r line || [[ -n "$line" ]]; do
             line="${line%"${line##*[![:space:]]}"}"
             [[ -z "$line" ]] && continue
             local context="" term="" id="" related="" url=""
-            if [[ "$line" =~ \"url\":\"([^\"]*)\" ]]; then
-                url="${BASH_REMATCH[1]}"
-            fi
-            if [[ "$line" =~ \"__context__\":\"([^\"]*)\" ]]; then
-                context="${BASH_REMATCH[1]}"
-            fi
-            if [[ "$line" =~ \"term\":\"([^\"]*)\" ]]; then
-                term="${BASH_REMATCH[1]}"
-            fi
-            if [[ "$line" =~ \"__id__\":\"([^\"]*)\" ]]; then
-                id="${BASH_REMATCH[1]}"
-            fi
-            if [[ "$line" =~ \"related\":\"([^\"]*)\" ]]; then
-                related="${BASH_REMATCH[1]}"
-            fi
+            if [[ "$line" =~ \"url\":\"([^\"]*)\" ]]; then url="${BASH_REMATCH[1]}"; fi
+            if [[ "$line" =~ \"__context__\":\"([^\"]*)\" ]]; then context="${BASH_REMATCH[1]}"; fi
+            if [[ "$line" =~ \"term\":\"([^\"]*)\" ]]; then term="${BASH_REMATCH[1]}"; fi
+            if [[ "$line" =~ \"__id__\":\"([^\"]*)\" ]]; then id="${BASH_REMATCH[1]}"; fi
+            if [[ "$line" =~ \"related\":\"([^\"]*)\" ]]; then related="${BASH_REMATCH[1]}"; fi
+            
             local raw_id="$id"
             [[ -z "$raw_id" ]] && raw_id="$term"
             [[ -z "$raw_id" ]] && continue
             __slugify_r "$raw_id"
-            local clean_id="$REPLY"
-            local ref_key="$clean_id"
+            local ref_key="$REPLY"
             if [[ -n "$context" && "$raw_id" != *.* ]]; then
                 __slugify_r "${context}.${raw_id}"
                 ref_key="$REPLY"
             fi
-            if [[ -n "${seen_defs[$ref_key]:-}" ]]; then
-                continue
+            
+            if [[ -z "${defs_urls[$ref_key]:-}" ]]; then
+                defs_urls["$ref_key"]="$url"
             fi
-            seen_defs["$ref_key"]=1
-            local -a rel_arr=()
+            
             if [[ -n "$related" ]]; then
                 local old_ifs="$IFS"
                 IFS=","
@@ -549,25 +540,34 @@ __build__() {
                     if [[ -n "$r" ]]; then
                         __slugify_r "$r"
                         r="$REPLY"
-                        rel_arr+=("\"$r\"")
+                        if [[ -z "${seen_deps["$ref_key::$r"]:-}" ]]; then
+                            seen_deps["$ref_key::$r"]=1
+                            local cur="${defs_deps_list["$ref_key"]:-}"
+                            if [[ -n "$cur" ]]; then
+                                defs_deps_list["$ref_key"]="${cur},\"${r}\""
+                            else
+                                defs_deps_list["$ref_key"]="\"${r}\""
+                            fi
+                        fi
                     fi
                 done
             fi
-            local rel_json=""
-            if [[ ${#rel_arr[@]} -gt 0 ]]; then
-                local old_ifs="$IFS"
-                IFS=","
-                rel_json="${rel_arr[*]}"
-                IFS="$old_ifs"
-            fi
-            (( first == 0 )) && json_content+=","
-            json_content+=$'\n'"  \"${ref_key}\": { \"url\": \"${url}\", \"deps\": [ ${rel_json} ] }"
-            first=0
         done <<< "$defs_data"
+
+        local json_content="{"
+        local first=1
+        local k
+        for k in "${!defs_urls[@]}"; do
+            (( first == 0 )) && json_content+=","
+            local url="${defs_urls[$k]}"
+            local rel_json="${defs_deps_list[$k]:-}"
+            json_content+=$'\n'"  \"${k}\": { \"url\": \"${url}\", \"deps\": [ ${rel_json} ] }"
+            first=0
+        done
         json_content+=$'\n'"}"
         printf "%s\n" "$json_content" > "$BUILDDIR/defs.json"
         __log "Generated defs index -> $BUILDDIR/defs.json" -t success -l wiki
-    }   
+    }    
 
     __build_sitemap() {
         local domain=""

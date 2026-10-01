@@ -50,7 +50,7 @@ __blocks__() {
             first_content_val="${BLOCK_VALS[type]}"
         else
             for k in "${BLOCK_KEYS[@]}"; do
-                if [[ "$k" != "__id__" && "$k" != "__context__" && "$k" != "context" && "$k" != "__entry__" && "$k" != "__refs__" && "$k" != "related" ]]; then
+                if [[ "$k" != "__id__" && "$k" != "__context__" && "$k" != "context" && "$k" != "__entry__" && "$k" != "__refs__" ]]; then
                     first_content_key="$k"
                     first_content_val="${BLOCK_VALS[$k]}"
                     break
@@ -117,7 +117,8 @@ __blocks__() {
                     if [[ -n "$r_item" ]]; then
                         local r_topic="${r_item%%.*}"
                         local r_ref="${r_item#*.}"
-                        line="{{${r_topic}:${r_ref}:${r_ref}}}"
+                        local slug_ref="$(__slugify "$r_ref")"
+                        line="{{${r_topic}:${slug_ref}:${r_ref}}}"
                         __parse_refs
                         rel_out+="        <li>$line</li>"$'\n'
                     fi
@@ -143,7 +144,7 @@ __blocks__() {
         LIST_HTML_MAP["$bname"]+="<li><a href=\"#${anchor_id}\">${BLOCK_TITLE}</a></li>"$'\n'
         content+="${html}"
     }
-
+    
     __block_quote() {
         local bname="$1"
         local _ref="$2[@]"

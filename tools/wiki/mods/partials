@@ -426,12 +426,37 @@ __partials__() {
     }
 
     __partial_search() {
-        WIKI_SEARCH_HTML="<div class=\"search-container\">"$'\n'"    <form action=\"/search.html\" method=\"GET\" class=\"search-form\" style=\"display: inline;\">"$'\n'"        <span class=\"search-input-prefix\">search:</span> <input type=\"text\" name=\"q\" id=\"search-input\" autocomplete=\"off\">"$'\n'"    </form>"$'\n'"    <div id=\"search-results\" class=\"search-popup\" style=\"display: none; position: absolute; z-index: 1000;\"></div>"$'\n'"</div>"
-    }
+        local s_modal="false"
+        local s_page="false"
+        local str="$*"
+        
+        while [[ "$str" =~ ([a-zA-Z_.-]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
+            local key="${BASH_REMATCH[1]}"
+            local val="${BASH_REMATCH[4]:-${BASH_REMATCH[3]:-${BASH_REMATCH[2]}}}"
+            if [[ "$key" == "modal" ]]; then s_modal="${val,,}"; fi
+            if [[ "$key" == "page" ]]; then s_page="${val,,}"; fi
+            str="${str#*${BASH_REMATCH[0]}}"
+        done
 
-    __partial_search_page() {
-        WIKI_SEARCH_PAGE_HTML="<div class=\"search-page-container\">"$'\n'"    <form action=\"/search.html\" method=\"GET\" class=\"search-form\">"$'\n'"        <span class=\"search-input-prefix\">search:</span> <input type=\"text\" name=\"q\" id=\"search-page-input\" autocomplete=\"off\">"$'\n'"    </form>"$'\n'"    <div id=\"search-page-results\" class=\"search-inline\"></div>"$'\n'"</div>"
-    }   
+        if [[ "$s_page" == "true" || "$s_page" == "1" ]]; then
+            WIKI_SEARCH_HTML="<div class=\"search-page-container\">"$'\n'
+            WIKI_SEARCH_HTML+="    <form action=\"/search.html\" method=\"GET\" class=\"search-form\">"$'\n'
+            WIKI_SEARCH_HTML+="        <span class=\"search-input-prefix\">search:</span> <input type=\"text\" name=\"q\" id=\"search-page-input\" autocomplete=\"off\">"$'\n'
+            WIKI_SEARCH_HTML+="    </form>"$'\n'
+            WIKI_SEARCH_HTML+="    <div id=\"search-page-results\" class=\"search-inline\"></div>"$'\n'
+            WIKI_SEARCH_HTML+="</div>"
+        elif [[ "$s_modal" == "true" || "$s_modal" == "1" ]]; then
+            WIKI_SEARCH_HTML="<a href=\"#\" id=\"search-trigger\">search</a>"$'\n'
+            WIKI_SEARCH_HTML+="<div id=\"search-modal\" class=\"search-modal\" style=\"display: none;\">"$'\n'
+            WIKI_SEARCH_HTML+="    <div class=\"search-modal-content\">"$'\n'
+            WIKI_SEARCH_HTML+="        <input type=\"text\" name=\"q\" id=\"search-input\" autocomplete=\"off\" placeholder=\"Type to search...\">"$'\n'
+            WIKI_SEARCH_HTML+="        <div id=\"search-results\" class=\"search-popup\" style=\"display: none;\"></div>"$'\n'
+            WIKI_SEARCH_HTML+="    </div>"$'\n'
+            WIKI_SEARCH_HTML+="</div>"
+        else
+            WIKI_SEARCH_HTML="<div class=\"search-container\">"$'\n'"    <form action=\"/search.html\" method=\"GET\" class=\"search-form\" style=\"display: inline;\">"$'\n'"        <span class=\"search-input-prefix\">search:</span> <input type=\"text\" name=\"q\" id=\"search-input\" autocomplete=\"off\">"$'\n'"    </form>"$'\n'"    <div id=\"search-results\" class=\"search-popup\" style=\"display: none; position: absolute; z-index: 1000;\"></div>"$'\n'"</div>"
+        fi
+    }    
 
     __partial_breadcrumb() {
         local b_root_label="Home"

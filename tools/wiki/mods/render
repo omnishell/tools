@@ -109,32 +109,36 @@ __render__() {
             __partial_author "$args"
             rendered="${rendered/"$full_match"/$WIKI_AUTHOR_HTML}"
         done
-        local search_tags=("{{ page.body }}" "{{page.body}}" "{{ page.name }}" "{{page.name}}" "{{ page.title }}" "{{page.title}}" "{{ wiki.menu }}" "{{wiki.menu}}" "{{ menu }}" "{{menu}}" "{{ wiki.featured }}" "{{wiki.featured}}" "{{ datetime.year }}" "{{datetime.year}}" "{{ datetime.now }}" "{{datetime.now}}" "{{ wiki.search }}" "{{wiki.search}}" "{{ wiki.search_page }}" "{{wiki.search_page}}" "{{ wiki.thumb }}" "{{wiki.thumb}}" "{{ wiki.tags }}" "{{wiki.tags}}" "{{ wiki.author }}" "{{wiki.author}}")
+        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?search[[:space:]]+([^}]+)\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local args="${BASH_REMATCH[2]}"
+            __partial_search "$args"
+            rendered="${rendered/"$full_match"/$WIKI_SEARCH_HTML}"
+        done
+        local search_tags=("{{ page.body }}" "{{ page.name }}" "{{ page.title }}" "{{ wiki.menu }}" "{{ wiki.featured }}" "{{ datetime.year }}" "{{ datetime.now }}" "{{ wiki.search }}" "{{ wiki.thumb }}" "{{ wiki.tags }}" "{{ wiki.author }}")
         local year now t_val=""
         printf -v year "%(%Y)T" -1
         printf -v now "%(%Y/%m/%d at %H:%M)T" -1
-        local WIKI_SEARCH_HTML="" WIKI_SEARCH_PAGE_HTML="" WIKI_THUMB_HTML="" WIKI_TAGS_HTML="" WIKI_AUTHOR_HTML=""
+        local WIKI_SEARCH_HTML="" WIKI_THUMB_HTML="" WIKI_TAGS_HTML="" WIKI_AUTHOR_HTML=""
         __partial_search
-        __partial_search_page
         __partial_thumb
         __partial_tags
         __partial_author
         for search in "${search_tags[@]}"; do
             case "$search" in
-                "{{ page.body }}"|"{{page.body}}") t_val="$content" ;;
-                "{{ page.name }}"|"{{page.name}}") t_val="$title" ;;
-                "{{ page.title }}"|"{{page.title}}") t_val="${PAGE_TITLES[$pagename]:-$pagename}" ;;
-                "{{ wiki.menu }}"|"{{wiki.menu}}"|"{{ menu }}"|"{{menu}}")
+                "{{ page.body }}") t_val="$content" ;;
+                "{{ page.name }}") t_val="$title" ;;
+                "{{ page.title }}") t_val="${PAGE_TITLES[$pagename]:-$pagename}" ;;
+                "{{ wiki.menu }}")
                     if (( p_menu == 1 )); then t_val="$WIKI_MENU_HTML"; else t_val=""; fi ;;
-                "{{ wiki.featured }}"|"{{wiki.featured}}"|"{{ featured }}"|"{{featured}}")
+                "{{ wiki.featured }}")
                     if (( p_featured == 1 )); then t_val="$WIKI_FEATURED_HTML"; else t_val=""; fi ;;
-                "{{ datetime.year }}"|"{{datetime.year}}") t_val="$year" ;;
-                "{{ datetime.now }}"|"{{datetime.now}}") t_val="$now" ;;
-                "{{ wiki.search }}"|"{{wiki.search}}") t_val="$WIKI_SEARCH_HTML" ;;
-                "{{ wiki.search_page }}"|"{{wiki.search_page}}") t_val="$WIKI_SEARCH_PAGE_HTML" ;;
-                "{{ wiki.thumb }}"|"{{wiki.thumb}}") t_val="$WIKI_THUMB_HTML" ;;
-                "{{ wiki.tags }}"|"{{wiki.tags}}") t_val="$WIKI_TAGS_HTML" ;;
-                "{{ wiki.author }}"|"{{wiki.author}}") t_val="$WIKI_AUTHOR_HTML" ;;
+                "{{ datetime.year }}") t_val="$year" ;;
+                "{{ datetime.now }}") t_val="$now" ;;
+                "{{ wiki.search }}") t_val="$WIKI_SEARCH_HTML" ;;
+                "{{ wiki.thumb }}") t_val="$WIKI_THUMB_HTML" ;;
+                "{{ wiki.tags }}") t_val="$WIKI_TAGS_HTML" ;;
+                "{{ wiki.author }}") t_val="$WIKI_AUTHOR_HTML" ;;
             esac
             rendered="${rendered//"$search"/$t_val}"
         done

@@ -2,7 +2,8 @@
 
 __helper__() {
 
-    declare -gA WIKIS WIKI_VARS WIKI_PAGES WIKI_PAGE_VARS WIKI_TEMPLATES WIKI_TEMPLATE_VARS WIKI_TOPICS WIKI_REFS WIKI_BLOCKS WIKI_AUTHORS 2>/dev/null || true
+    declare -ga WIKIS WIKI_TEMPLATES 2>/dev/null || true
+    declare -gA WIKI_VARS WIKI_PAGES WIKI_PAGE_VARS WIKI_TEMPLATE_VARS WIKI_TOPICS WIKI_REFS WIKI_BLOCKS WIKI_AUTHORS 2>/dev/null || true
     
     __slugify() {
         __slugify_r "$1"

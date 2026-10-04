@@ -602,14 +602,14 @@ __partials__() {
                             t="${t#"${t%%[![:space:]]*}"}"
                             t="${t%"${t##*[![:space:]]}"}"
                             [[ -z "$t" ]] && continue
-                            WIKI_TAGS_HTML+="<tag><a href=\"/etc/search.html?q=tag:${t}\">${t}</a></tag>"$'\n'
+                            WIKI_TAGS_HTML+="<tag><a href=\"?search=tag:${t}\">${t}</a></tag>"$'\n'
                         done
                         WIKI_TAGS_HTML+="</tags>"
                     fi
                 fi
             fi
         done < "$file"
-    }
+    }   
 
     __partial_related() {
         local title="" args="root=/"

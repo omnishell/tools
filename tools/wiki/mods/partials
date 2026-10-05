@@ -837,7 +837,7 @@ __partials__() {
 
         [[ -n "$h_label" ]] && btn_html+="${btn_html:+ }<span>${h_label}</span>"
 
-        WIKI_HELP_HTML=""
+        WIKI_HELP_HTML="<div class=\"help-container\">"$'\n'
         
         if [[ "$h_button" == "true" || "$h_button" == "1" ]]; then
             WIKI_HELP_HTML+="    <button type=\"button\" id=\"help-toggle\" aria-label=\"help\" aria-expanded=\"false\" aria-controls=\"help-modal\">"$'\n'
@@ -849,8 +849,8 @@ __partials__() {
             WIKI_HELP_HTML+="    </a>"$'\n'
         fi
 
-        WIKI_HELP_HTML+="    <div id=\"help-modal\" class=\"help-modal\" role=\"dialog\" aria-label=\"help\" style=\"display: none;\">"$'\n'
-        WIKI_HELP_HTML+="        <div class=\"help-modal-content\">"$'\n'
+        WIKI_HELP_HTML+="    <div id=\"help-modal\" class=\"search-modal\" role=\"dialog\" aria-label=\"help\" style=\"display: none;\">"$'\n'
+        WIKI_HELP_HTML+="        <div class=\"search-modal-content\">"$'\n'
         
         local k
         for k in "${keys[@]}"; do
@@ -862,6 +862,7 @@ __partials__() {
         
         WIKI_HELP_HTML+="        </div>"$'\n'
         WIKI_HELP_HTML+="    </div>"$'\n'
+        WIKI_HELP_HTML+="</div>"$'\n'
     }
 
 }

@@ -2,160 +2,175 @@
 
 __render__() {
     __render_template() {
-        local PAGE_LAYOUT="" skip=0 ll
-        for ll in "${layout_lines[@]}"; do
-            if [[ "$ll" == *"{%"* ]]; then
-                if [[ "$ll" =~ \{\%\ *if\ *\'([^\']+)\'\ *in\ *page\.name\ *and\ *not\ *page\.name\ *==\ *\"([^\"]+)\"\ *\%\} ]]; then
-                    if [[ "$pagename" == *"${BASH_REMATCH[1]}"* && "$pagename" != "${BASH_REMATCH[2]}" ]]; then skip=0; else skip=1; fi
-                    continue
-                fi
-                if [[ "$ll" =~ \{\%\ *if\ *\'([^\']+)\'\ *in\ *page\.name\ *\%\} ]]; then
-                    if [[ "$pagename" == *"${BASH_REMATCH[1]}"* ]]; then skip=0; else skip=1; fi
-                    continue
-                fi
-                if [[ "$ll" =~ \{\%\ *else\ *\%\} ]]; then
-                    if [[ $skip -eq 0 ]]; then skip=1; else skip=0; fi
-                    continue
-                fi
-                if [[ "$ll" =~ \{\%\ *endif\ *\%\} ]]; then
-                    skip=0
-                    continue
-                fi
-                if [[ "$ll" =~ \{\%\ *(for|from|include|endfor).*\%\} ]]; then continue; fi
+    local PAGE_LAYOUT="" skip=0 ll
+    for ll in "${layout_lines[@]}"; do
+        if [[ "$ll" == *"{%"* ]]; then
+            if [[ "$ll" =~ \{\%\ *if\ *\'([^\']+)\'\ *in\ *page\.name\ *and\ *not\ *page\.name\ *==\ *\"([^\"]+)\"\ *\%\} ]]; then
+                if [[ "$pagename" == *"${BASH_REMATCH[1]}"* && "$pagename" != "${BASH_REMATCH[2]}" ]]; then skip=0; else skip=1; fi
+                continue
             fi
-            if (( skip == 1 )); then continue; fi
-            if [[ "$ll" == *"{{ render_menu_item"* || "$ll" == *"{{ item"* ]]; then continue; fi
-            if [[ "$ll" == *"{{ page."* ]]; then
-                while [[ "$ll" =~ \{\{\ *page\.([a-zA-Z0-9_.-]+)\ *\}\} ]]; do
-                    local full_match="${BASH_REMATCH[0]}"
-                    local suffix="${BASH_REMATCH[1]}"
-                    if [[ "$suffix" == "name" || "$suffix" == "body" || "$suffix" == "title" ]]; then
-                        ll="${ll/"$full_match"/%%RETAIN_PAGE_${suffix}%%}"
-                    else
-                        local var_name="page.${suffix}"
-                        local val="${PAGE_VARS[$var_name]}"
-                        ll="${ll//"$full_match"/$val}"
-                    fi
-                done
-                local pnt="{{ page.name }}"
-                local pbt="{{ page.body }}"
-                local ptt="{{ page.title }}"
-                ll="${ll//%%RETAIN_PAGE_name%%/$pnt}"
-                ll="${ll//%%RETAIN_PAGE_body%%/$pbt}"
-                ll="${ll//%%RETAIN_PAGE_title%%/$ptt}"
+            if [[ "$ll" =~ \{\%\ *if\ *\'([^\']+)\'\ *in\ *page\.name\ *\%\} ]]; then
+                if [[ "$pagename" == *"${BASH_REMATCH[1]}"* ]]; then skip=0; else skip=1; fi
+                continue
             fi
-            if [[ "$ll" == *"{{ wiki.frontmatter."* ]]; then
-                while [[ "$ll" =~ \{\{\ *wiki\.frontmatter\.([a-zA-Z0-9_.-]+)\ *\}\} ]]; do
-                    local full_match="${BASH_REMATCH[0]}"
-                    local var_name="page.${BASH_REMATCH[1]}"
+            if [[ "$ll" =~ \{\%\ *else\ *\%\} ]]; then
+                if [[ $skip -eq 0 ]]; then skip=1; else skip=0; fi
+                continue
+            fi
+            if [[ "$ll" =~ \{\%\ *endif\ *\%\} ]]; then
+                skip=0
+                continue
+            fi
+            if [[ "$ll" =~ \{\%\ *(for|from|include|endfor).*\%\} ]]; then continue; fi
+        fi
+        if (( skip == 1 )); then continue; fi
+        if [[ "$ll" == *"{{ render_menu_item"* || "$ll" == *"{{ item"* ]]; then continue; fi
+        if [[ "$ll" == *"{{ page."* ]]; then
+            while [[ "$ll" =~ \{\{\ *page\.([a-zA-Z0-9_.-]+)\ *\}\} ]]; do
+                local full_match="${BASH_REMATCH[0]}"
+                local suffix="${BASH_REMATCH[1]}"
+                if [[ "$suffix" == "name" || "$suffix" == "body" || "$suffix" == "title" ]]; then
+                    ll="${ll/"$full_match"/%%RETAIN_PAGE_${suffix}%%}"
+                else
+                    local var_name="page.${suffix}"
                     local val="${PAGE_VARS[$var_name]}"
                     ll="${ll//"$full_match"/$val}"
-                done
-            fi
-            PAGE_LAYOUT+="$ll"$'\n'
-        done
-        local p_breadcrumb=1 p_featured=1 p_menu=1
-        local p_str="${PAGE_VARS["page.partials"]:-}"
-        if [[ -n "$p_str" ]]; then
-            while [[ "$p_str" =~ ([a-zA-Z0-9_-]+)=([a-zA-Z0-9_-]+) ]]; do
-                local k="${BASH_REMATCH[1]}" v="${BASH_REMATCH[2]}"
-                if [[ "$v" == "false" || "$v" == "0" ]]; then
-                    [[ "$k" == "breadcrumb" ]] && p_breadcrumb=0
-                    [[ "$k" == "featured" ]] && p_featured=0
-                    [[ "$k" == "menu" ]] && p_menu=0
-                elif [[ "$v" == "true" || "$v" == "1" ]]; then
-                    [[ "$k" == "breadcrumb" ]] && p_breadcrumb=1
-                    [[ "$k" == "featured" ]] && p_featured=1
-                    [[ "$k" == "menu" ]] && p_menu=1
                 fi
-                p_str="${p_str#*${BASH_REMATCH[0]}}"
+            done
+            local pnt="{{ page.name }}"
+            local pbt="{{ page.body }}"
+            local ptt="{{ page.title }}"
+            ll="${ll//%%RETAIN_PAGE_name%%/$pnt}"
+            ll="${ll//%%RETAIN_PAGE_body%%/$pbt}"
+            ll="${ll//%%RETAIN_PAGE_title%%/$ptt}"
+        fi
+        if [[ "$ll" == *"{{ wiki.frontmatter."* ]]; then
+            while [[ "$ll" =~ \{\{\ *wiki\.frontmatter\.([a-zA-Z0-9_.-]+)\ *\}\} ]]; do
+                local full_match="${BASH_REMATCH[0]}"
+                local var_name="page.${BASH_REMATCH[1]}"
+                local val="${PAGE_VARS[$var_name]}"
+                ll="${ll//"$full_match"/$val}"
             done
         fi
-        rendered="$PAGE_LAYOUT"
-        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?menu[[:space:]]+([^}]+)\}\} ]]; do
-            local full_match="${BASH_REMATCH[0]}"
-            local args="${BASH_REMATCH[2]}"
-            local custom_menu=""
-            if (( p_menu == 1 )); then
-                custom_menu="$(__partial_menu "$args")"
+        PAGE_LAYOUT+="$ll"$'\n'
+    done
+    
+    local p_breadcrumb=1 p_featured=1 p_menu=1
+    local p_str="${PAGE_VARS["page.partials"]:-}"
+    if [[ -n "$p_str" ]]; then
+        while [[ "$p_str" =~ ([a-zA-Z0-9_-]+)=([a-zA-Z0-9_-]+) ]]; do
+            local k="${BASH_REMATCH[1]}" v="${BASH_REMATCH[2]}"
+            if [[ "$v" == "false" || "$v" == "0" ]]; then
+                [[ "$k" == "breadcrumb" ]] && p_breadcrumb=0
+                [[ "$k" == "featured" ]] && p_featured=0
+                [[ "$k" == "menu" ]] && p_menu=0
+            elif [[ "$v" == "true" || "$v" == "1" ]]; then
+                [[ "$k" == "breadcrumb" ]] && p_breadcrumb=1
+                [[ "$k" == "featured" ]] && p_featured=1
+                [[ "$k" == "menu" ]] && p_menu=1
             fi
-            rendered="${rendered/"$full_match"/$custom_menu}"
+            p_str="${p_str#*${BASH_REMATCH[0]}}"
         done
-        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?breadcrumb[[:space:]]*([^}]*)\}\} ]]; do
-            local full_match="${BASH_REMATCH[0]}"
-            local args="${BASH_REMATCH[2]}"
-            local custom_bc=""
-            if (( p_breadcrumb == 1 )); then
-                custom_bc="$(__partial_breadcrumb "$args")"
-            fi
-            rendered="${rendered/"$full_match"/$custom_bc}"
-        done
-        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?related([[:space:]]+([^}]+))?[[:space:]]*\}\} ]]; do
-            local full_match="${BASH_REMATCH[0]}"
-            local args="${BASH_REMATCH[3]:-}"
-            local custom_related="$(__partial_related "$args")"
-            rendered="${rendered/"$full_match"/$custom_related}"
-        done
-        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?head[[:space:]]+([^}]+)\}\} ]]; do
-            local full_match="${BASH_REMATCH[0]}"
-            local args="${BASH_REMATCH[2]}"
-            local custom_head="$(__partial_head "$args")"
-            rendered="${rendered/"$full_match"/$custom_head}"
-        done
-        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?author[[:space:]]+([^}]+)\}\} ]]; do
-            local full_match="${BASH_REMATCH[0]}"
-            local args="${BASH_REMATCH[2]}"
-            __partial_author "$args"
-            rendered="${rendered/"$full_match"/$WIKI_AUTHOR_HTML}"
-        done
-        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?search[[:space:]]+([^}]+)\}\} ]]; do
-            local full_match="${BASH_REMATCH[0]}"
-            local args="${BASH_REMATCH[2]}"
-            __partial_search "$args"
-            rendered="${rendered/"$full_match"/$WIKI_SEARCH_HTML}"
-        done
-        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?settings[[:space:]]+([^}]+)\}\} ]]; do
-            local full_match="${BASH_REMATCH[0]}"
-            local args="${BASH_REMATCH[2]}"
-            __partial_settings "$args"
-            rendered="${rendered/"$full_match"/$WIKI_SETTINGS_HTML}"
-        done
-        local search_tags=("{{ page.body }}" "{{ page.name }}" "{{ page.title }}" "{{ wiki.menu }}" "{{ wiki.featured }}" "{{ datetime.year }}" "{{ datetime.now }}" "{{ wiki.search }}" "{{ wiki.thumb }}" "{{ wiki.tags }}" "{{ wiki.author }}" "{{ wiki.settings }}")
-        local year now t_val=""
-        printf -v year "%(%Y)T" -1
-        printf -v now "%(%Y/%m/%d at %H:%M)T" -1
-        local WIKI_SEARCH_HTML="" WIKI_THUMB_HTML="" WIKI_TAGS_HTML="" WIKI_AUTHOR_HTML="" WIKI_SETTINGS_HTML=""
-        __partial_search
-        __partial_thumb
-        __partial_tags
-        __partial_author
-        __partial_settings
-        for search in "${search_tags[@]}"; do
-            case "$search" in
-                "{{ page.body }}") t_val="$content" ;;
-                "{{ page.name }}") t_val="$title" ;;
-                "{{ page.title }}") t_val="${PAGE_TITLES[$pagename]:-$pagename}" ;;
-                "{{ wiki.menu }}")
-                    if (( p_menu == 1 )); then t_val="$WIKI_MENU_HTML"; else t_val=""; fi ;;
-                "{{ wiki.featured }}")
-                    if (( p_featured == 1 )); then t_val="$WIKI_FEATURED_HTML"; else t_val=""; fi ;;
-                "{{ datetime.year }}") t_val="$year" ;;
-                "{{ datetime.now }}") t_val="$now" ;;
-                "{{ wiki.search }}") t_val="$WIKI_SEARCH_HTML" ;;
-                "{{ wiki.thumb }}") t_val="$WIKI_THUMB_HTML" ;;
-                "{{ wiki.tags }}") t_val="$WIKI_TAGS_HTML" ;;
-                "{{ wiki.author }}") t_val="$WIKI_AUTHOR_HTML" ;;
-                "{{ wiki.settings }}") t_val="$WIKI_SETTINGS_HTML" ;;
-            esac
-            rendered="${rendered//"$search"/$t_val}"
-        done
-        local auto_js="<script>%%WIKI_SEARCH_CONFIG%%; if (typeof hljs !== 'undefined') hljs.highlightAll();</script>"
-        if [[ "$rendered" == *"</body>"* ]]; then
-            rendered="${rendered/<\/body>/$auto_js$'\n'<\/body>}"
-        else
-            rendered+="$auto_js"$'\n'
+    fi
+    
+    rendered="$PAGE_LAYOUT"
+    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?menu[[:space:]]+([^}]+)\}\} ]]; do
+        local full_match="${BASH_REMATCH[0]}"
+        local args="${BASH_REMATCH[2]}"
+        local custom_menu=""
+        if (( p_menu == 1 )); then
+            custom_menu="$(__partial_menu "$args")"
         fi
-    }    
+        rendered="${rendered/"$full_match"/$custom_menu}"
+    done
+    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?breadcrumb[[:space:]]*([^}]*)\}\} ]]; do
+        local full_match="${BASH_REMATCH[0]}"
+        local args="${BASH_REMATCH[2]}"
+        local custom_bc=""
+        if (( p_breadcrumb == 1 )); then
+            custom_bc="$(__partial_breadcrumb "$args")"
+        fi
+        rendered="${rendered/"$full_match"/$custom_bc}"
+    done
+    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?related([[:space:]]+([^}]+))?[[:space:]]*\}\} ]]; do
+        local full_match="${BASH_REMATCH[0]}"
+        local args="${BASH_REMATCH[3]:-}"
+        local custom_related="$(__partial_related "$args")"
+        rendered="${rendered/"$full_match"/$custom_related}"
+    done
+    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?head[[:space:]]+([^}]+)\}\} ]]; do
+        local full_match="${BASH_REMATCH[0]}"
+        local args="${BASH_REMATCH[2]}"
+        local custom_head="$(__partial_head "$args")"
+        rendered="${rendered/"$full_match"/$custom_head}"
+    done
+    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?author[[:space:]]+([^}]+)\}\} ]]; do
+        local full_match="${BASH_REMATCH[0]}"
+        local args="${BASH_REMATCH[2]}"
+        __partial_author "$args"
+        rendered="${rendered/"$full_match"/$WIKI_AUTHOR_HTML}"
+    done
+    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?search[[:space:]]+([^}]+)\}\} ]]; do
+        local full_match="${BASH_REMATCH[0]}"
+        local args="${BASH_REMATCH[2]}"
+        __partial_search "$args"
+        rendered="${rendered/"$full_match"/$WIKI_SEARCH_HTML}"
+    done
+    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?settings[[:space:]]+([^}]+)\}\} ]]; do
+        local full_match="${BASH_REMATCH[0]}"
+        local args="${BASH_REMATCH[2]}"
+        __partial_settings "$args"
+        rendered="${rendered/"$full_match"/$WIKI_SETTINGS_HTML}"
+    done
+    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?help[[:space:]]+([^}]+)\}\} ]]; do
+        local full_match="${BASH_REMATCH[0]}"
+        local args="${BASH_REMATCH[2]}"
+        __partial_help "$args"
+        rendered="${rendered/"$full_match"/$WIKI_HELP_HTML}"
+    done
+
+    local search_tags=("{{ page.body }}" "{{ page.name }}" "{{ page.title }}" "{{ wiki.menu }}" "{{ wiki.featured }}" "{{ datetime.year }}" "{{ datetime.now }}" "{{ wiki.search }}" "{{ wiki.thumb }}" "{{ wiki.tags }}" "{{ wiki.author }}" "{{ wiki.settings }}" "{{ wiki.help }}")
+    local year now t_val=""
+    printf -v year "%(%Y)T" -1
+    printf -v now "%(%Y/%m/%d at %H:%M)T" -1
+    local WIKI_SEARCH_HTML="" WIKI_THUMB_HTML="" WIKI_TAGS_HTML="" WIKI_AUTHOR_HTML="" WIKI_SETTINGS_HTML="" WIKI_HELP_HTML=""
+    
+    __partial_search
+    __partial_thumb
+    __partial_tags
+    __partial_author
+    __partial_settings
+    __partial_help
+    
+    for search in "${search_tags[@]}"; do
+        case "$search" in
+            "{{ page.body }}") t_val="$content" ;;
+            "{{ page.name }}") t_val="$title" ;;
+            "{{ page.title }}") t_val="${PAGE_TITLES[$pagename]:-$pagename}" ;;
+            "{{ wiki.menu }}")
+                if (( p_menu == 1 )); then t_val="$WIKI_MENU_HTML"; else t_val=""; fi ;;
+            "{{ wiki.featured }}")
+                if (( p_featured == 1 )); then t_val="$WIKI_FEATURED_HTML"; else t_val=""; fi ;;
+            "{{ datetime.year }}") t_val="$year" ;;
+            "{{ datetime.now }}") t_val="$now" ;;
+            "{{ wiki.search }}") t_val="$WIKI_SEARCH_HTML" ;;
+            "{{ wiki.thumb }}") t_val="$WIKI_THUMB_HTML" ;;
+            "{{ wiki.tags }}") t_val="$WIKI_TAGS_HTML" ;;
+            "{{ wiki.author }}") t_val="$WIKI_AUTHOR_HTML" ;;
+            "{{ wiki.settings }}") t_val="$WIKI_SETTINGS_HTML" ;;
+            "{{ wiki.help }}") t_val="$WIKI_HELP_HTML" ;;
+        esac
+        rendered="${rendered//"$search"/$t_val}"
+    done
+    
+    local auto_js="<script>%%WIKI_SEARCH_CONFIG%%; if (typeof hljs !== 'undefined') hljs.highlightAll();</script>"
+    if [[ "$rendered" == *"</body>"* ]]; then
+        rendered="${rendered/<\/body>/$auto_js$'\n'<\/body>}"
+    else
+        rendered+="$auto_js"$'\n'
+    fi
+}
+    
     __render_main() {
         local file="$1" pagename="$2" out_path="$3" current_dir="$4"
         local h_regex='^(#{1,6})\ +(.*)'

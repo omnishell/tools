@@ -474,7 +474,7 @@ __partials__() {
             WIKI_SEARCH_HTML+="    <div id=\"search-page-results\" class=\"search-inline\"></div>"$'\n'
             WIKI_SEARCH_HTML+="</div>"
         elif [[ "$s_modal" == "true" || "$s_modal" == "1" ]]; then
-            WIKI_SEARCH_HTML="<a href=\"#\" id=\"search-trigger\">search</a>"$'\n'
+            WIKI_SEARCH_HTML="<a href=\"#\" id=\"search-toggle\">search</a>"$'\n'
             WIKI_SEARCH_HTML+="<div id=\"search-modal\" class=\"search-modal\" style=\"display: none;\">"$'\n'
             WIKI_SEARCH_HTML+="    <div class=\"search-modal-content\">"$'\n'
             WIKI_SEARCH_HTML+="        <input type=\"text\" name=\"q\" id=\"search-input\" autocomplete=\"off\"${ph_attr_modal}>"$'\n'
@@ -731,7 +731,7 @@ __partials__() {
     }
 
     __partial_settings() {
-        local s_label="" s_icon="" s_content_align="" s_content_align_desc=""
+        local s_label="" s_icon="" s_content_align="" s_content_align_desc="" s_button="true"
         local str="$*"
         while [[ "$str" =~ ([a-zA-Z_.-]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
             local key="${BASH_REMATCH[1]}"
@@ -740,6 +740,7 @@ __partials__() {
             elif [[ "$key" == "icon" ]]; then s_icon="$val"
             elif [[ "$key" == "content_align" ]]; then s_content_align="${val,,}"
             elif [[ "$key" == "content_align_desc" ]]; then s_content_align_desc="$val"
+            elif [[ "$key" == "button" ]]; then s_button="${val,,}"
             fi
             str="${str#*${BASH_REMATCH[0]}}"
         done
@@ -765,10 +766,17 @@ __partials__() {
             btn_html+="${btn_html:+ }<span>${s_label}</span>"
         fi
 
-        WIKI_SETTINGS_HTML="<div class=\"settings-container\">"$'\n'
-        WIKI_SETTINGS_HTML+="    <button type=\"button\" id=\"settings-toggle\" aria-label=\"configurações\" aria-expanded=\"false\" aria-controls=\"settings-modal\">"$'\n'
+        local tag_open="<button type=\"button\" id=\"settings-toggle\" aria-label=\"configurações\" aria-expanded=\"false\" aria-controls=\"settings-modal\">"
+        local tag_close="</button>"
+        if [[ "$s_button" == "false" ]]; then
+            tag_open="<a href=\"#\" id=\"settings-toggle\" aria-label=\"configurações\" aria-expanded=\"false\" aria-controls=\"settings-modal\">"
+            tag_close="</a>"
+        fi
+
+        WIKI_SETTINGS_HTML=""
+        WIKI_SETTINGS_HTML+="    ${tag_open}"$'\n'
         WIKI_SETTINGS_HTML+="        ${btn_html}"$'\n'
-        WIKI_SETTINGS_HTML+="    </button>"$'\n'
+        WIKI_SETTINGS_HTML+="    ${tag_close}"$'\n'
         WIKI_SETTINGS_HTML+="    <div id=\"settings-modal\" class=\"search-modal\" role=\"dialog\" aria-label=\"configurações\" style=\"display: none;\">"$'\n'
         WIKI_SETTINGS_HTML+="        <div class=\"search-modal-content\">"$'\n'
 
@@ -791,6 +799,69 @@ __partials__() {
 
         WIKI_SETTINGS_HTML+="        </div>"$'\n'
         WIKI_SETTINGS_HTML+="    </div>"$'\n'
-        WIKI_SETTINGS_HTML+="</div>"
     }
+
+    __partial_help() {
+        local h_button="" h_label="" h_icon=""
+        local -a keys=()
+        local -A descs=()
+        local str="$*"
+        
+        while [[ "$str" =~ ([a-zA-Z0-9_.\?-]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
+            local key="${BASH_REMATCH[1]}"
+            local val="${BASH_REMATCH[4]:-${BASH_REMATCH[3]:-${BASH_REMATCH[2]}}}"
+            
+            case "$key" in
+                button) h_button="${val,,}" ;;
+                label)  h_label="$val" ;;
+                icon)   h_icon="$val" ;;
+                *)      keys+=("$key"); descs["$key"]="$val" ;;
+            esac
+            str="${str#*${BASH_REMATCH[0]}}"
+        done
+
+        local btn_html=""
+        if [[ -n "$h_icon" ]]; then
+            if [[ "$h_icon" == http*://*.svg ]]; then
+                btn_html="$(curl -sL "$h_icon")"
+            elif [[ "$h_icon" == *.svg ]]; then
+                if [[ -f "$h_icon" ]]; then
+                    btn_html="$(<"$h_icon")"
+                elif [[ -f "$SOURCEDIR/$h_icon" ]]; then
+                    btn_html="$(<"$SOURCEDIR/$h_icon")"
+                fi
+            else
+                btn_html="<img src=\"${h_icon}\" alt=\"icon\"/>"
+            fi
+        fi
+
+        [[ -n "$h_label" ]] && btn_html+="${btn_html:+ }<span>${h_label}</span>"
+
+        WIKI_HELP_HTML=""
+        
+        if [[ "$h_button" == "true" || "$h_button" == "1" ]]; then
+            WIKI_HELP_HTML+="    <button type=\"button\" id=\"help-toggle\" aria-label=\"help\" aria-expanded=\"false\" aria-controls=\"help-modal\">"$'\n'
+            WIKI_HELP_HTML+="        ${btn_html}"$'\n'
+            WIKI_HELP_HTML+="    </button>"$'\n'
+        else
+            WIKI_HELP_HTML+="    <a href=\"#\" id=\"help-toggle\" aria-label=\"help\" aria-expanded=\"false\" aria-controls=\"help-modal\">"$'\n'
+            WIKI_HELP_HTML+="        ${btn_html}"$'\n'
+            WIKI_HELP_HTML+="    </a>"$'\n'
+        fi
+
+        WIKI_HELP_HTML+="    <div id=\"help-modal\" class=\"help-modal\" role=\"dialog\" aria-label=\"help\" style=\"display: none;\">"$'\n'
+        WIKI_HELP_HTML+="        <div class=\"help-modal-content\">"$'\n'
+        
+        local k
+        for k in "${keys[@]}"; do
+            WIKI_HELP_HTML+="            <div class=\"help-row\">"$'\n'
+            WIKI_HELP_HTML+="                <span class=\"help-label\"><inline>${k}</inline></span>"$'\n'
+            WIKI_HELP_HTML+="                <span>${descs[$k]}</span>"$'\n'
+            WIKI_HELP_HTML+="            </div>"$'\n'
+        done
+        
+        WIKI_HELP_HTML+="        </div>"$'\n'
+        WIKI_HELP_HTML+="    </div>"$'\n'
+    }
+
 }

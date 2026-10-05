@@ -1,7 +1,6 @@
 #! /bin/bash
 
 __render__() {
-        
     __render_template() {
         local PAGE_LAYOUT="" skip=0 ll
         for ll in "${layout_lines[@]}"; do
@@ -115,15 +114,22 @@ __render__() {
             __partial_search "$args"
             rendered="${rendered/"$full_match"/$WIKI_SEARCH_HTML}"
         done
-        local search_tags=("{{ page.body }}" "{{ page.name }}" "{{ page.title }}" "{{ wiki.menu }}" "{{ wiki.featured }}" "{{ datetime.year }}" "{{ datetime.now }}" "{{ wiki.search }}" "{{ wiki.thumb }}" "{{ wiki.tags }}" "{{ wiki.author }}")
+        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?settings[[:space:]]+([^}]+)\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local args="${BASH_REMATCH[2]}"
+            __partial_settings "$args"
+            rendered="${rendered/"$full_match"/$WIKI_SETTINGS_HTML}"
+        done
+        local search_tags=("{{ page.body }}" "{{ page.name }}" "{{ page.title }}" "{{ wiki.menu }}" "{{ wiki.featured }}" "{{ datetime.year }}" "{{ datetime.now }}" "{{ wiki.search }}" "{{ wiki.thumb }}" "{{ wiki.tags }}" "{{ wiki.author }}" "{{ wiki.settings }}")
         local year now t_val=""
         printf -v year "%(%Y)T" -1
         printf -v now "%(%Y/%m/%d at %H:%M)T" -1
-        local WIKI_SEARCH_HTML="" WIKI_THUMB_HTML="" WIKI_TAGS_HTML="" WIKI_AUTHOR_HTML=""
+        local WIKI_SEARCH_HTML="" WIKI_THUMB_HTML="" WIKI_TAGS_HTML="" WIKI_AUTHOR_HTML="" WIKI_SETTINGS_HTML=""
         __partial_search
         __partial_thumb
         __partial_tags
         __partial_author
+        __partial_settings
         for search in "${search_tags[@]}"; do
             case "$search" in
                 "{{ page.body }}") t_val="$content" ;;
@@ -139,6 +145,7 @@ __render__() {
                 "{{ wiki.thumb }}") t_val="$WIKI_THUMB_HTML" ;;
                 "{{ wiki.tags }}") t_val="$WIKI_TAGS_HTML" ;;
                 "{{ wiki.author }}") t_val="$WIKI_AUTHOR_HTML" ;;
+                "{{ wiki.settings }}") t_val="$WIKI_SETTINGS_HTML" ;;
             esac
             rendered="${rendered//"$search"/$t_val}"
         done
@@ -148,8 +155,7 @@ __render__() {
         else
             rendered+="$auto_js"$'\n'
         fi
-    }
-    
+    }    
     __render_main() {
         local file="$1" pagename="$2" out_path="$3" current_dir="$4"
         local h_regex='^(#{1,6})\ +(.*)'

@@ -777,13 +777,13 @@ __partials__() {
         WIKI_SETTINGS_HTML+="    ${tag_open}"$'\n'
         WIKI_SETTINGS_HTML+="        ${btn_html}"$'\n'
         WIKI_SETTINGS_HTML+="    ${tag_close}"$'\n'
-        WIKI_SETTINGS_HTML+="    <div id=\"settings-modal\" class=\"search-modal\" role=\"dialog\" aria-label=\"configurações\" style=\"display: none;\">"$'\n'
-        WIKI_SETTINGS_HTML+="        <div class=\"search-modal-content\">"$'\n'
+        WIKI_SETTINGS_HTML+="    <div id=\"settings-modal\" class=\"settings-modal\" role=\"dialog\" aria-label=\"configurações\" style=\"display: none;\">"$'\n'
+        WIKI_SETTINGS_HTML+="        <div class=\"settings-modal-content\">"$'\n'
 
         if [[ "$s_content_align" == "true" ]]; then
-            WIKI_SETTINGS_HTML+="            <div class=\"settings-row\" data-setting=\"body-position\">"$'\n'
-            WIKI_SETTINGS_HTML+="                <span class=\"settings-label\" id=\"settings-body-position\">${s_content_align_desc}</span>"$'\n'
-            WIKI_SETTINGS_HTML+="                <div class=\"settings-segmented\" role=\"radiogroup\" aria-labelledby=\"settings-body-position\">"$'\n'
+            WIKI_SETTINGS_HTML+="            <div class=\"settings-row\" data-setting=\"content-align\">"$'\n'
+            WIKI_SETTINGS_HTML+="                <span class=\"settings-label\" id=\"settings-content-align\">${s_content_align_desc}</span>"$'\n'
+            WIKI_SETTINGS_HTML+="                <div class=\"settings-segmented\" role=\"radiogroup\" aria-labelledby=\"settings-content-align\">"$'\n'
             WIKI_SETTINGS_HTML+="                <button type=\"button\" role=\"radio\" data-value=\"left\" aria-label=\"à esquerda\" aria-checked=\"false\" tabindex=\"-1\">"$'\n'
             WIKI_SETTINGS_HTML+="                    <svg viewBox=\"0 0 20 16\" width=\"20\" height=\"16\" aria-hidden=\"true\"><rect x=\"0.5\" y=\"0.5\" width=\"19\" height=\"15\" fill=\"none\" stroke=\"currentColor\"/><rect x=\"3\" y=\"4\" width=\"5\" height=\"8\" fill=\"currentColor\"/></svg>"$'\n'
             WIKI_SETTINGS_HTML+="                </button>"$'\n'
@@ -800,6 +800,7 @@ __partials__() {
         WIKI_SETTINGS_HTML+="        </div>"$'\n'
         WIKI_SETTINGS_HTML+="    </div>"$'\n'
     }
+
 
     __partial_help() {
         local h_button="" h_label="" h_icon=""
@@ -837,7 +838,7 @@ __partials__() {
 
         [[ -n "$h_label" ]] && btn_html+="${btn_html:+ }<span>${h_label}</span>"
 
-        WIKI_HELP_HTML="<div class=\"help-container\">"$'\n'
+        WIKI_HELP_HTML=""
         
         if [[ "$h_button" == "true" || "$h_button" == "1" ]]; then
             WIKI_HELP_HTML+="    <button type=\"button\" id=\"help-toggle\" aria-label=\"help\" aria-expanded=\"false\" aria-controls=\"help-modal\">"$'\n'
@@ -849,8 +850,8 @@ __partials__() {
             WIKI_HELP_HTML+="    </a>"$'\n'
         fi
 
-        WIKI_HELP_HTML+="    <div id=\"help-modal\" class=\"search-modal\" role=\"dialog\" aria-label=\"help\" style=\"display: none;\">"$'\n'
-        WIKI_HELP_HTML+="        <div class=\"search-modal-content\">"$'\n'
+        WIKI_HELP_HTML+="    <div id=\"help-modal\" class=\"help-modal\" role=\"dialog\" aria-label=\"help\" style=\"display: none;\">"$'\n'
+        WIKI_HELP_HTML+="        <div class=\"help-modal-content\">"$'\n'
         
         local k
         for k in "${keys[@]}"; do
@@ -862,7 +863,5 @@ __partials__() {
         
         WIKI_HELP_HTML+="        </div>"$'\n'
         WIKI_HELP_HTML+="    </div>"$'\n'
-        WIKI_HELP_HTML+="</div>"$'\n'
     }
-
 }

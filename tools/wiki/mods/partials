@@ -731,46 +731,64 @@ __partials__() {
     }
 
     __partial_settings() {
-        local s_label=""
+        local s_label="" s_icon="" s_content_align="" s_content_align_desc=""
         local str="$*"
         while [[ "$str" =~ ([a-zA-Z_.-]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
             local key="${BASH_REMATCH[1]}"
             local val="${BASH_REMATCH[4]:-${BASH_REMATCH[3]:-${BASH_REMATCH[2]}}}"
-            if [[ "$key" == "label" ]]; then s_label="$val"; fi
+            if [[ "$key" == "label" ]]; then s_label="$val"
+            elif [[ "$key" == "icon" ]]; then s_icon="$val"
+            elif [[ "$key" == "content_align" ]]; then s_content_align="${val,,}"
+            elif [[ "$key" == "content_align_desc" ]]; then s_content_align_desc="$val"
+            fi
             str="${str#*${BASH_REMATCH[0]}}"
         done
 
-        local label_html="$s_label"
-        if [[ "$s_label" == http*://*.svg ]]; then
-            label_html="$(curl -sL "$s_label")"
-        elif [[ "$s_label" == *.svg ]]; then
-            if [[ -f "$s_label" ]]; then
-                label_html="$(<"$s_label")"
-            elif [[ -f "$SOURCEDIR/$s_label" ]]; then
-                label_html="$(<"$SOURCEDIR/$s_label")"
+        local btn_html=""
+        if [[ -n "$s_icon" ]]; then
+            local icon_html="$s_icon"
+            if [[ "$s_icon" == http*://*.svg ]]; then
+                icon_html="$(curl -sL "$s_icon")"
+            elif [[ "$s_icon" == *.svg ]]; then
+                if [[ -f "$s_icon" ]]; then
+                    icon_html="$(<"$s_icon")"
+                elif [[ -f "$SOURCEDIR/$s_icon" ]]; then
+                    icon_html="$(<"$SOURCEDIR/$s_icon")"
+                fi
+            else
+                icon_html="<img src=\"${s_icon}\" alt=\"icon\"/>"
             fi
+            btn_html+="${icon_html}"
+        fi
+
+        if [[ -n "$s_label" ]]; then
+            btn_html+="${btn_html:+ }<span>${s_label}</span>"
         fi
 
         WIKI_SETTINGS_HTML="<div class=\"settings-container\">"$'\n'
         WIKI_SETTINGS_HTML+="    <button type=\"button\" id=\"settings-toggle\" aria-label=\"configurações\" aria-expanded=\"false\" aria-controls=\"settings-modal\">"$'\n'
-        WIKI_SETTINGS_HTML+="        ${label_html}"$'\n'
+        WIKI_SETTINGS_HTML+="        ${btn_html}"$'\n'
         WIKI_SETTINGS_HTML+="    </button>"$'\n'
         WIKI_SETTINGS_HTML+="    <div id=\"settings-modal\" class=\"search-modal\" role=\"dialog\" aria-label=\"configurações\" style=\"display: none;\">"$'\n'
         WIKI_SETTINGS_HTML+="        <div class=\"search-modal-content\">"$'\n'
-        WIKI_SETTINGS_HTML+="            <div class=\"settings-row\" data-setting=\"body-position\">"$'\n'
-        WIKI_SETTINGS_HTML+="                <span class=\"settings-label\" id=\"settings-body-position\">posição do conteúdo:</span>"$'\n'
-        WIKI_SETTINGS_HTML+="                <div class=\"settings-segmented\" role=\"radiogroup\" aria-labelledby=\"settings-body-position\">"$'\n'
-        WIKI_SETTINGS_HTML+="                <button type=\"button\" role=\"radio\" data-value=\"left\" aria-label=\"à esquerda\" aria-checked=\"false\" tabindex=\"-1\">"$'\n'
-        WIKI_SETTINGS_HTML+="                    <svg viewBox=\"0 0 20 16\" width=\"20\" height=\"16\" aria-hidden=\"true\"><rect x=\"0.5\" y=\"0.5\" width=\"19\" height=\"15\" fill=\"none\" stroke=\"currentColor\"/><rect x=\"3\" y=\"4\" width=\"5\" height=\"8\" fill=\"currentColor\"/></svg>"$'\n'
-        WIKI_SETTINGS_HTML+="                </button>"$'\n'
-        WIKI_SETTINGS_HTML+="                <button type=\"button\" role=\"radio\" data-value=\"center\" aria-label=\"centralizado\" aria-checked=\"false\" tabindex=\"-1\">"$'\n'
-        WIKI_SETTINGS_HTML+="                    <svg viewBox=\"0 0 20 16\" width=\"20\" height=\"16\" aria-hidden=\"true\"><rect x=\"0.5\" y=\"0.5\" width=\"19\" height=\"15\" fill=\"none\" stroke=\"currentColor\"/><rect x=\"7.5\" y=\"4\" width=\"5\" height=\"8\" fill=\"currentColor\"/></svg>"$'\n'
-        WIKI_SETTINGS_HTML+="                </button>"$'\n'
-        WIKI_SETTINGS_HTML+="                <button type=\"button\" role=\"radio\" data-value=\"right\" aria-label=\"à direita\" aria-checked=\"false\" tabindex=\"-1\">"$'\n'
-        WIKI_SETTINGS_HTML+="                    <svg viewBox=\"0 0 20 16\" width=\"20\" height=\"16\" aria-hidden=\"true\"><rect x=\"0.5\" y=\"0.5\" width=\"19\" height=\"15\" fill=\"none\" stroke=\"currentColor\"/><rect x=\"12\" y=\"4\" width=\"5\" height=\"8\" fill=\"currentColor\"/></svg>"$'\n'
-        WIKI_SETTINGS_HTML+="                </button>"$'\n'
-        WIKI_SETTINGS_HTML+="                </div>"$'\n'
-        WIKI_SETTINGS_HTML+="            </div>"$'\n'
+
+        if [[ "$s_content_align" == "true" ]]; then
+            WIKI_SETTINGS_HTML+="            <div class=\"settings-row\" data-setting=\"body-position\">"$'\n'
+            WIKI_SETTINGS_HTML+="                <span class=\"settings-label\" id=\"settings-body-position\">${s_content_align_desc}</span>"$'\n'
+            WIKI_SETTINGS_HTML+="                <div class=\"settings-segmented\" role=\"radiogroup\" aria-labelledby=\"settings-body-position\">"$'\n'
+            WIKI_SETTINGS_HTML+="                <button type=\"button\" role=\"radio\" data-value=\"left\" aria-label=\"à esquerda\" aria-checked=\"false\" tabindex=\"-1\">"$'\n'
+            WIKI_SETTINGS_HTML+="                    <svg viewBox=\"0 0 20 16\" width=\"20\" height=\"16\" aria-hidden=\"true\"><rect x=\"0.5\" y=\"0.5\" width=\"19\" height=\"15\" fill=\"none\" stroke=\"currentColor\"/><rect x=\"3\" y=\"4\" width=\"5\" height=\"8\" fill=\"currentColor\"/></svg>"$'\n'
+            WIKI_SETTINGS_HTML+="                </button>"$'\n'
+            WIKI_SETTINGS_HTML+="                <button type=\"button\" role=\"radio\" data-value=\"center\" aria-label=\"centralizado\" aria-checked=\"false\" tabindex=\"-1\">"$'\n'
+            WIKI_SETTINGS_HTML+="                    <svg viewBox=\"0 0 20 16\" width=\"20\" height=\"16\" aria-hidden=\"true\"><rect x=\"0.5\" y=\"0.5\" width=\"19\" height=\"15\" fill=\"none\" stroke=\"currentColor\"/><rect x=\"7.5\" y=\"4\" width=\"5\" height=\"8\" fill=\"currentColor\"/></svg>"$'\n'
+            WIKI_SETTINGS_HTML+="                </button>"$'\n'
+            WIKI_SETTINGS_HTML+="                <button type=\"button\" role=\"radio\" data-value=\"right\" aria-label=\"à direita\" aria-checked=\"false\" tabindex=\"-1\">"$'\n'
+            WIKI_SETTINGS_HTML+="                    <svg viewBox=\"0 0 20 16\" width=\"20\" height=\"16\" aria-hidden=\"true\"><rect x=\"0.5\" y=\"0.5\" width=\"19\" height=\"15\" fill=\"none\" stroke=\"currentColor\"/><rect x=\"12\" y=\"4\" width=\"5\" height=\"8\" fill=\"currentColor\"/></svg>"$'\n'
+            WIKI_SETTINGS_HTML+="                </button>"$'\n'
+            WIKI_SETTINGS_HTML+="                </div>"$'\n'
+            WIKI_SETTINGS_HTML+="            </div>"$'\n'
+        fi
+
         WIKI_SETTINGS_HTML+="        </div>"$'\n'
         WIKI_SETTINGS_HTML+="    </div>"$'\n'
         WIKI_SETTINGS_HTML+="</div>"

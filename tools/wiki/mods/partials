@@ -801,17 +801,16 @@ __partials__() {
         WIKI_SETTINGS_HTML+="    </div>"$'\n'
     }
 
-
     __partial_help() {
         local h_button="" h_label="" h_icon=""
         local -a keys=()
         local -A descs=()
         local str="$*"
-        
-        while [[ "$str" =~ ([a-zA-Z0-9_.\?-]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
+
+        while [[ "$str" =~ ([a-zA-Z0-9_.\?/-]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
             local key="${BASH_REMATCH[1]}"
             local val="${BASH_REMATCH[4]:-${BASH_REMATCH[3]:-${BASH_REMATCH[2]}}}"
-            
+
             case "$key" in
                 button) h_button="${val,,}" ;;
                 label)  h_label="$val" ;;
@@ -820,7 +819,6 @@ __partials__() {
             esac
             str="${str#*${BASH_REMATCH[0]}}"
         done
-
         local btn_html=""
         if [[ -n "$h_icon" ]]; then
             if [[ "$h_icon" == http*://*.svg ]]; then
@@ -835,11 +833,9 @@ __partials__() {
                 btn_html="<img src=\"${h_icon}\" alt=\"icon\"/>"
             fi
         fi
-
         [[ -n "$h_label" ]] && btn_html+="${btn_html:+ }<span>${h_label}</span>"
-
         WIKI_HELP_HTML=""
-        
+
         if [[ "$h_button" == "true" || "$h_button" == "1" ]]; then
             WIKI_HELP_HTML+="    <button type=\"button\" id=\"help-toggle\" aria-label=\"help\" aria-expanded=\"false\" aria-controls=\"help-modal\">"$'\n'
             WIKI_HELP_HTML+="        ${btn_html}"$'\n'
@@ -849,10 +845,9 @@ __partials__() {
             WIKI_HELP_HTML+="        ${btn_html}"$'\n'
             WIKI_HELP_HTML+="    </a>"$'\n'
         fi
-
         WIKI_HELP_HTML+="    <div id=\"help-modal\" class=\"help-modal\" role=\"dialog\" aria-label=\"help\" style=\"display: none;\">"$'\n'
         WIKI_HELP_HTML+="        <div class=\"help-modal-content\">"$'\n'
-        
+
         local k
         for k in "${keys[@]}"; do
             WIKI_HELP_HTML+="            <div class=\"help-row\">"$'\n'
@@ -860,7 +855,7 @@ __partials__() {
             WIKI_HELP_HTML+="                <span>${descs[$k]}</span>"$'\n'
             WIKI_HELP_HTML+="            </div>"$'\n'
         done
-        
+
         WIKI_HELP_HTML+="        </div>"$'\n'
         WIKI_HELP_HTML+="    </div>"$'\n'
     }

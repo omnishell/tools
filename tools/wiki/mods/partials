@@ -732,6 +732,7 @@ __partials__() {
 
     __partial_settings() {
         local s_label="" s_icon="" s_content_align="" s_content_align_desc="" s_button="true"
+        local s_themes_selector="false" s_themes_path="" s_themes_desc="tema"
         local str="$*"
         while [[ "$str" =~ ([a-zA-Z_.-]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
             local key="${BASH_REMATCH[1]}"
@@ -741,10 +742,12 @@ __partials__() {
             elif [[ "$key" == "content_align" ]]; then s_content_align="${val,,}"
             elif [[ "$key" == "content_align_desc" ]]; then s_content_align_desc="$val"
             elif [[ "$key" == "button" ]]; then s_button="${val,,}"
+            elif [[ "$key" == "themes_selector" ]]; then s_themes_selector="${val,,}"
+            elif [[ "$key" == "themes_path" ]]; then s_themes_path="$val"
+            elif [[ "$key" == "themes_desc" ]]; then s_themes_desc="$val"
             fi
             str="${str#*${BASH_REMATCH[0]}}"
         done
-
         local btn_html=""
         if [[ -n "$s_icon" ]]; then
             local icon_html="$s_icon"
@@ -761,25 +764,21 @@ __partials__() {
             fi
             btn_html+="${icon_html}"
         fi
-
         if [[ -n "$s_label" ]]; then
             btn_html+="${btn_html:+ }<span>${s_label}</span>"
         fi
-
         local tag_open="<button type=\"button\" id=\"settings-toggle\" aria-label=\"configurações\" aria-expanded=\"false\" aria-controls=\"settings-modal\">"
         local tag_close="</button>"
         if [[ "$s_button" == "false" ]]; then
             tag_open="<a href=\"#\" id=\"settings-toggle\" aria-label=\"configurações\" aria-expanded=\"false\" aria-controls=\"settings-modal\">"
             tag_close="</a>"
         fi
-
         WIKI_SETTINGS_HTML=""
         WIKI_SETTINGS_HTML+="    ${tag_open}"$'\n'
         WIKI_SETTINGS_HTML+="        ${btn_html}"$'\n'
         WIKI_SETTINGS_HTML+="    ${tag_close}"$'\n'
         WIKI_SETTINGS_HTML+="    <div id=\"settings-modal\" class=\"settings-modal\" role=\"dialog\" aria-label=\"configurações\" style=\"display: none;\">"$'\n'
         WIKI_SETTINGS_HTML+="        <div class=\"settings-modal-content\">"$'\n'
-
         if [[ "$s_content_align" == "true" ]]; then
             WIKI_SETTINGS_HTML+="            <div class=\"settings-row\" data-setting=\"content-align\">"$'\n'
             WIKI_SETTINGS_HTML+="                <span class=\"settings-label\" id=\"settings-content-align\">${s_content_align_desc}</span>"$'\n'
@@ -796,7 +795,28 @@ __partials__() {
             WIKI_SETTINGS_HTML+="                </div>"$'\n'
             WIKI_SETTINGS_HTML+="            </div>"$'\n'
         fi
-
+        if [[ "$s_themes_selector" == "true" ]]; then
+            WIKI_SETTINGS_HTML+="            <div class=\"settings-row\" data-setting=\"theme\">"$'\n'
+            WIKI_SETTINGS_HTML+="                <span class=\"settings-label\" id=\"settings-theme\">${s_themes_desc}</span>"$'\n'
+            WIKI_SETTINGS_HTML+="                <div class=\"settings-segmented\">"$'\n'
+            WIKI_SETTINGS_HTML+="                    <select id=\"lemma-theme-select\" data-path=\"${s_themes_path}\" aria-labelledby=\"settings-theme\" style=\"background:transparent;color:inherit;border:none;outline:none;cursor:pointer;padding:5px 7px;\"></select>"$'\n'
+            WIKI_SETTINGS_HTML+="                </div>"$'\n'
+            WIKI_SETTINGS_HTML+="            </div>"$'\n'
+            if [[ -n "$s_themes_path" ]]; then
+                local abs_themes_path="$s_themes_path"
+                if [[ "$s_themes_path" == /* ]]; then
+                    abs_themes_path="${BUILDDIR}${s_themes_path}"
+                    [[ ! -f "$abs_themes_path" && -n "${STATICDIR:-}" && "$s_themes_path" == "/_static/"* ]] && abs_themes_path="${STATICDIR}/${s_themes_path#/_static/}"
+                else
+                    abs_themes_path="${SOURCEDIR}/${s_themes_path}"
+                fi
+                if [[ -f "$abs_themes_path" ]]; then
+                    local themes_json
+                    themes_json="$(<"$abs_themes_path")"
+                    WIKI_SETTINGS_HTML+="            <script id=\"lemma-themes-data\" type=\"application/json\">${themes_json}</script>"$'\n'
+                fi
+            fi
+        fi
         WIKI_SETTINGS_HTML+="        </div>"$'\n'
         WIKI_SETTINGS_HTML+="    </div>"$'\n'
     }

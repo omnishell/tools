@@ -64,11 +64,14 @@ __blocks__() {
         if [[ -z "$raw_id" && ${#BLOCK_KEYS[@]} -gt 0 ]]; then
             raw_id="${BLOCK_VALS[${BLOCK_KEYS[0]}]}"
         fi
-        local clean_id="$(__slugify "$raw_id")"
+        local clean_id=""
+        __slugify_r "$raw_id"
+        clean_id="$REPLY"
         [[ -z "$clean_id" ]] && clean_id="rnd-$RANDOM"
         local ref_key="$clean_id"
         if [[ -n "$block_context" && "$raw_id" != *.* ]]; then
-            ref_key="$(__slugify "${block_context}.${raw_id}")"
+            __slugify_r "${block_context}.${raw_id}"
+            ref_key="$REPLY"
         fi
         local anchor_id_slug="${ref_key//./-}"
         local anchor_id="block-${bname}-${anchor_id_slug}"
@@ -93,14 +96,17 @@ __blocks__() {
         fi
         local html="<block id=\"${anchor_id}\" class=\"block-${bname}\">"$'\n'
         html+="    <fields id=\"fields-${bname}-${anchor_id_slug}\" class=\"fields-${bname}\">"$'\n'
-        local json_str="{\"url\":\"$(__json_escape "/${pagename//./\/}.html#${anchor_id}")\""
+        __json_escape_r "/${pagename//./\/}.html#${anchor_id}"
+        local json_str="{\"url\":\"$REPLY\""
         if [[ -n "${BLOCK_VALS[__context__]:-}" ]]; then
-            json_str+=",\"__context__\":\"$(__json_escape "${BLOCK_VALS[__context__]}")\""
+            __json_escape_r "${BLOCK_VALS[__context__]}"
+            json_str+=",\"__context__\":\"$REPLY\""
         fi
         for k in "${BLOCK_KEYS[@]}"; do
             [[ "$k" == "__id__" || "$k" == "__context__" || "$k" == "__entry__" ]] && continue
             local v="${BLOCK_VALS[$k]}"
-            json_str+=",\"${k}\":\"$(__json_escape "$v")\""
+            __json_escape_r "$v"
+            json_str+=",\"${k}\":\"$REPLY\""
             local dk="${BLOCK_DISPLAY_KEYS[$k]:-}"
             [[ -z "$dk" ]] && continue
             local dv="${BLOCK_DISPLAY_VALS[$k]}"
@@ -117,7 +123,8 @@ __blocks__() {
                     if [[ -n "$r_item" ]]; then
                         local r_topic="${r_item%%.*}"
                         local r_ref="${r_item#*.}"
-                        local slug_ref="$(__slugify "$r_ref")"
+                        __slugify_r "$r_ref"
+                        local slug_ref="$REPLY"
                         line="{{${r_topic}:${slug_ref}:${r_ref}}}"
                         __parse_refs
                         rel_out+="        <li>$line</li>"$'\n'
@@ -198,7 +205,8 @@ __blocks__() {
             q_text="${q_text//$'\n'/<br>}"
         fi
         
-        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        __get_style_attr_r "$b_width" "$b_style"
+        local style_attr="$REPLY"
         local cite_attr=""
         [[ -n "$q_cite" ]] && cite_attr=" cite=\"${q_cite}\""
         
@@ -431,9 +439,9 @@ __blocks__() {
             table_html+="<p><a href=\"#\" class=\"table-caption\">${caption_line}</a></p>"$'\n'
         fi
         table_html+="</div>"$'\n'
-        local enc_url="$(__json_escape "/${pagename//./\/}.html")"
-        local enc_headers="$(__json_escape "$header_line")"
-        local enc_lines="$(__json_escape "${table_buffer[*]}")"
+        __json_escape_r "/${pagename//./\/}.html"; local enc_url="$REPLY"
+        __json_escape_r "$header_line"; local enc_headers="$REPLY"
+        __json_escape_r "${table_buffer[*]}"; local enc_lines="$REPLY"
         SEARCH_INDEX_MAP["table"]+="{\"url\":\"$enc_url\",\"headers\":\"$enc_headers\",\"columns\":\"$num_columns\",\"lines\":\"$enc_lines\"},"$'\n'
         LIST_HTML_MAP["table"]+="<li><a href=\"#${table_id}\">${caption_line:-Table ${page_table_count}}</a></li>"$'\n'
         content+="${table_html}"
@@ -938,14 +946,17 @@ __blocks__() {
         local IFS=$'\n'
         local tex_content="${_buffer_ref[*]}"
 
-        local svg_output
-        svg_output=$("$_WIKI_DIR/bin/latex" --stdout --dpr 0.4 <<< "$tex_content")
-        svg_output="${svg_output//rgba(0,0,0,1)/var(--fg)}"
+        local svg_output="${LATEX_MEM_CACHE["block:${tex_content}"]:-}"
+        if [[ -z "$svg_output" ]]; then
+            svg_output=$("$_WIKI_DIR/bin/latex" --stdout --dpr 0.4 <<< "$tex_content")
+            svg_output="${svg_output//rgba(0,0,0,1)/var(--fg)}"
+            LATEX_MEM_CACHE["block:${tex_content}"]="$svg_output"
+        fi
 
         content+="<div class=\"latex\">"$'\n'"${svg_output}"$'\n'"</div>"$'\n'
     }   
 
-    __get_style_attr() {
+    __get_style_attr_r() {
         local b_width="$1" b_style="$2"
         local inline_style=""
         if [[ -n "$b_width" ]]; then
@@ -976,8 +987,15 @@ __blocks__() {
             [[ "${inline_style: -1}" != ";" && -n "$inline_style" ]] && inline_style+=";"
         fi
         if [[ -n "$inline_style" ]]; then
-            printf ' style="%s"' "$inline_style"
+            REPLY=" style=\"${inline_style}\""
+        else
+            REPLY=""
         fi
+    }
+
+    __get_style_attr() {
+        __get_style_attr_r "$@"
+        printf '%s' "$REPLY"
     }
 
     __block_image() {
@@ -1052,8 +1070,8 @@ __blocks__() {
         if [[ -n "$b_align" ]]; then
             b_style="display: flex; flex-direction: column; align-items: ${b_align}; justify-content: ${b_align}; text-align: ${b_align}; ${b_style}"
         fi
-        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
-        local img_style_attr="$(__get_style_attr "$i_width" "$i_style")"
+        __get_style_attr_r "$b_width" "$b_style"; local style_attr="$REPLY"
+        __get_style_attr_r "$i_width" "$i_style"; local img_style_attr="$REPLY"
         if [[ -z "$img_style_attr" ]]; then
             img_style_attr=" style=\"width: inherit;\""
         elif [[ "$img_style_attr" != *"width"* ]]; then
@@ -1194,8 +1212,8 @@ __blocks__() {
             t_text="${t_text//$'\n'/<br>}"
         fi
         
-        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
-        local tag_style_attr="$(__get_style_attr "$t_width" "$t_style")"
+        __get_style_attr_r "$b_width" "$b_style"; local style_attr="$REPLY"
+        __get_style_attr_r "$t_width" "$t_style"; local tag_style_attr="$REPLY"
         
         local html="<div id=\"block-text-wrapper-${t_id}\" class=\"block-text-wrapper\"${style_attr}>"$'\n'
         html+="    <text id=\"block-text-${t_id}\" class=\"block-text\"${tag_style_attr}>"$'\n'
@@ -1253,7 +1271,7 @@ __blocks__() {
         h_title="$line"
         line="$temp_line"
         
-        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        __get_style_attr_r "$b_width" "$b_style"; local style_attr="$REPLY"
         local html="<details class=\"hide-block\"${style_attr}>"$'\n'
         html+="<summary class=\"hide-title\">${h_title}</summary>"$'\n'
         html+="<div class=\"hide-content\">"$'\n'
@@ -1299,7 +1317,7 @@ __blocks__() {
             elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
         fi
         
-        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        __get_style_attr_r "$b_width" "$b_style"; local style_attr="$REPLY"
         local html="<buttons id=\"block-card-buttons-${b_id}\" class=\"block-card-buttons\"${style_attr}>"$'\n'
         local i=1 btn temp_text temp_url js_click
         
@@ -1387,7 +1405,7 @@ __blocks__() {
             elif [[ "$current_key" == "__style__" ]]; then b_style="$current_val"; fi
         fi
         
-        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        __get_style_attr_r "$b_width" "$b_style"; local style_attr="$REPLY"
         local html="<card id=\"block-card-${b_id}\" class=\"block-card\"${style_attr}>"$'\n'
         if [[ -n "$c_cover" ]]; then
             local cover_src="$c_cover"
@@ -1538,7 +1556,7 @@ __blocks__() {
             items_style=" style=\"gap: ${r_gap};\""
         fi
         
-        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        __get_style_attr_r "$b_width" "$b_style"; local style_attr="$REPLY"
         local html="<row id=\"block-row-${r_id}\" class=\"block-row\"${style_attr}>"$'\n'
         html+="    <items id=\"block-row-items-${r_id}\" class=\"block-row-items\"${items_style}>"$'\n'
         
@@ -1730,7 +1748,7 @@ __blocks__() {
             c_items_attr="${stripped_items}"
         fi
                  
-        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        __get_style_attr_r "$b_width" "$b_style"; local style_attr="$REPLY"
         local html="<carousel id=\"block-carousel-${c_id}\" class=\"block-carousel\" data-items=\"${c_items_attr}\"${style_attr}>"$'\n'
         html+="    <div class=\"carousel-wrapper\">"$'\n'
         html+="        <button class=\"carousel-btn-prev\">Prev</button>"$'\n'
@@ -1876,7 +1894,7 @@ __blocks__() {
             rows_style=" style=\"gap: ${g_gap};\""
         fi
         
-        local style_attr="$(__get_style_attr "$b_width" "$b_style")"
+        __get_style_attr_r "$b_width" "$b_style"; local style_attr="$REPLY"
         local html="<grid id=\"block-grid-${g_id}\" class=\"block-grid\"${style_attr}>"$'\n'
         html+="    <rows id=\"block-grid-rows-${g_id}\" class=\"block-grid-rows\"${rows_style}>"$'\n'
         

@@ -145,41 +145,11 @@ __partials__() {
             local -A seen=()
             
             local -a sorted_custom_pages=()
-            local -a raw_sorted_custom=()
-            mapfile -t raw_sorted_custom < <(
-                local p
-                for p in "${_pages[@]}"; do
-                    local prev_IFS="$IFS"
-                    IFS='.'
-                    local -a parts=($p)
-                    IFS="$prev_IFS"
-                    local sort_key=""
-                    local cum_path=""
-                    for (( i=0; i<${#parts[@]}; i++ )); do
-                        local part="${parts[$i]}"
-                        if [[ -z "$cum_path" ]]; then cum_path="$part"; else cum_path="${cum_path}.${part}"; fi
-                        local w type
-                        if (( i == ${#parts[@]} - 1 )); then
-                            type="0"
-                            w="${PAGE_WEIGHTS[$cum_path]:-9999999}"
-                        else
-                            type="1"
-                            w="${PAGE_WEIGHTS[$cum_path]:-9999999}"
-                            if [[ "$w" == "9999999" && "$part" =~ ^([0-9]+)(\..+)?$ ]]; then
-                                w="${BASH_REMATCH[1]}"
-                            fi
-                        fi
-                        w="0000000${w}"
-                        w="${w: -7}"
-                        sort_key+="/${type}_${w}_${part}"
-                    done
-                    echo "${sort_key}|${p}"
-                done | LC_ALL=C sort -t'|' -k1,1
-            )
-            local item
-            for item in "${raw_sorted_custom[@]}"; do
-                sorted_custom_pages+=("${item##*|}")
-            done
+            if [[ ${#_SORTED_PAGES_LEAF_FIRST[@]} -gt 0 && -z "$prefix" && -z "$m_exclude" ]]; then
+                sorted_custom_pages=("${_SORTED_PAGES_LEAF_FIRST[@]}")
+            else
+                __sort_page_hierarchy _pages sorted_custom_pages "." "leaf_first"
+            fi
             
             local -a current_path=()
             local p
@@ -201,6 +171,8 @@ __partials__() {
                 local target_depth=$p_depth
                 if (( p_depth > m_depth )); then
                     target_depth=$m_depth
+                    is_dir=1
+                elif [[ "${IS_DIR_PAGE["$p"]:-0}" == "1" ]]; then
                     is_dir=1
                 else
                     local i
@@ -237,20 +209,23 @@ __partials__() {
                     local page_url="${node_full//./\/}.html"
                     if [[ $is_dir -eq 1 ]]; then
                         [[ "$disp_name" != */ ]] && disp_name="${disp_name}/"
-                        local best_page="" best_weight=9999999 cp
-                        for cp in "${_pages[@]}"; do
-                            if [[ "$cp" == "${node_full}."* ]]; then
-                                local cw="${PAGE_WEIGHTS[$cp]:-9999999}"
-                                if (( 10#$cw < 10#$best_weight )); then
-                                    best_weight=$cw
-                                    best_page=$cp
-                                elif (( 10#$cw == 10#$best_weight )); then
-                                    if [[ -z "$best_page" || "$cp" < "$best_page" ]]; then
+                        local best_page="${DIR_BEST_PAGE["$node_full"]:-}"
+                        if [[ -z "$best_page" ]]; then
+                            local best_weight=9999999 cp
+                            for cp in "${_pages[@]}"; do
+                                if [[ "$cp" == "${node_full}."* ]]; then
+                                    local cw="${PAGE_WEIGHTS[$cp]:-9999999}"
+                                    if (( 10#$cw < 10#$best_weight )); then
+                                        best_weight=$cw
                                         best_page=$cp
+                                    elif (( 10#$cw == 10#$best_weight )); then
+                                        if [[ -z "$best_page" || "$cp" < "$best_page" ]]; then
+                                            best_page=$cp
+                                        fi
                                     fi
                                 fi
-                            fi
-                        done
+                            done
+                        fi
                         if [[ -n "$best_page" ]]; then
                             page_url="${best_page//./\/}.html"
                         else
@@ -322,42 +297,10 @@ __partials__() {
         
         WIKI_MENU_HTML="<ul class=\"menu-ul\">"$'\n'
         local -a sorted_pages=()
-        if [ ${#_nested_pages[@]} -gt 0 ]; then
-            local -a raw_sorted=()
-            mapfile -t raw_sorted < <(
-                local p
-                for p in "${_nested_pages[@]}"; do
-                    local prev_IFS="$IFS"
-                    IFS='.'
-                    local -a parts=($p)
-                    IFS="$prev_IFS"
-                    local sort_key=""
-                    local cum_path=""
-                    for (( i=0; i<${#parts[@]}; i++ )); do
-                        local part="${parts[$i]}"
-                        if [[ -z "$cum_path" ]]; then cum_path="$part"; else cum_path="${cum_path}.${part}"; fi
-                        local w type
-                        if (( i == ${#parts[@]} - 1 )); then
-                            type="0"
-                            w="${PAGE_WEIGHTS[$cum_path]:-9999999}"
-                        else
-                            type="1"
-                            w="${PAGE_WEIGHTS[$cum_path]:-9999999}"
-                            if [[ "$w" == "9999999" && "$part" =~ ^([0-9]+)(\..+)?$ ]]; then
-                                w="${BASH_REMATCH[1]}"
-                            fi
-                        fi
-                        w="0000000${w}"
-                        w="${w: -7}"
-                        sort_key+="/${type}_${w}_${part}"
-                    done
-                    echo "${sort_key}|${p}"
-                done | LC_ALL=C sort -t'|' -k1,1
-            )
-            local item
-            for item in "${raw_sorted[@]}"; do
-                sorted_pages+=("${item##*|}")
-            done
+        if [[ ${#_SORTED_PAGES_LEAF_FIRST[@]} -gt 0 ]]; then
+            sorted_pages=("${_SORTED_PAGES_LEAF_FIRST[@]}")
+        elif [ ${#_nested_pages[@]} -gt 0 ]; then
+            __sort_page_hierarchy _nested_pages sorted_pages "." "leaf_first"
         fi
         local -a current_path=()
         local idx
@@ -526,26 +469,28 @@ __partials__() {
                 elif [[ -f "$SOURCEDIR/${dir_path}.md" ]]; then
                     out+="<span class=\"breadcrumb-sep\">${b_sep}</span><a href=\"/${dir_path}.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
                 else
-                    local best_page=""
-                    local best_weight=9999999
-                    local p
-                    for p in "${_pages[@]}"; do
-                        if [[ "$p" == "${cum_slug}."* ]]; then
-                            local remainder="${p#${cum_slug}.}"
-                            if [[ "$remainder" != *.* ]]; then
-                                local w="${PAGE_WEIGHTS[$p]}"
-                                [[ -z "$w" ]] && w=9999999
-                                if (( 10#$w < 10#$best_weight )); then
-                                    best_weight=$w
-                                    best_page="$p"
-                                elif (( 10#$w == 10#$best_weight )); then
-                                    if [[ -z "$best_page" ]] || [[ "$p" < "$best_page" ]]; then
+                    local best_page="${DIR_BEST_PAGE["$cum_slug"]:-}"
+                    if [[ -z "$best_page" ]]; then
+                        local best_weight=9999999
+                        local p
+                        for p in "${_pages[@]}"; do
+                            if [[ "$p" == "${cum_slug}."* ]]; then
+                                local remainder="${p#${cum_slug}.}"
+                                if [[ "$remainder" != *.* ]]; then
+                                    local w="${PAGE_WEIGHTS[$p]}"
+                                    [[ -z "$w" ]] && w=9999999
+                                    if (( 10#$w < 10#$best_weight )); then
+                                        best_weight=$w
                                         best_page="$p"
+                                    elif (( 10#$w == 10#$best_weight )); then
+                                        if [[ -z "$best_page" ]] || [[ "$p" < "$best_page" ]]; then
+                                            best_page="$p"
+                                        fi
                                     fi
                                 fi
                             fi
-                        fi
-                    done
+                        done
+                    fi
                     if [[ -n "$best_page" ]]; then
                         out+="<span class=\"breadcrumb-sep\">${b_sep}</span><a href=\"/${best_page//./\/}.html\" class=\"breadcrumb-${b_idx}\">${b_title}</a>"
                     else
@@ -560,40 +505,46 @@ __partials__() {
 
     __partial_thumb() {
         WIKI_THUMB_HTML=""
-        local in_globals=0 g_line t_img
-        while IFS= read -r g_line || [[ -n "$g_line" ]]; do
-            g_line="${g_line%$'\r'}"
-            if (( in_globals == 0 )); then
-                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals=1
-            else
-                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
-                if [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*thumb:[[:space:]]*(.*)$ ]]; then
-                    t_img="${BASH_REMATCH[1]}"
-                    t_img="${t_img#"${t_img%%[![:space:]]*}"}"
-                    t_img="${t_img%"${t_img##*[![:space:]]}"}"
-                    if [[ -n "$t_img" ]]; then
-                        if [[ "$t_img" == "./"* ]]; then
-                            local dir_path="${current_dir//./\/}"
-                            [[ "$dir_path" == "/" ]] && dir_path=""
-                            t_img="/_assets${dir_path:+/$dir_path}/${t_img#./}"
-                            t_img="${t_img%.*}.webp"
-                        elif [[ "$t_img" != http://* && "$t_img" != https://* && "$t_img" != /* ]]; then
-                            if [[ "$t_img" != *.* ]]; then
-                                if [[ -f "$BUILDDIR/_assets/${t_img}.webp" ]]; then t_img="${t_img}.webp"
-                                elif [[ -f "$BUILDDIR/_assets/${t_img}.png" ]]; then t_img="${t_img}.png"
-                                elif [[ -f "$BUILDDIR/_assets/${t_img}.jpg" ]]; then t_img="${t_img}.jpg"
-                                elif [[ -f "$BUILDDIR/_assets/${t_img}.jpeg" ]]; then t_img="${t_img}.jpeg"
-                                fi
-                            fi
-                            t_img="/_assets/${t_img}"
-                        fi
-                        WIKI_THUMB_HTML="<figure class=\"block-image\" style=\"display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;\">"$'\n'
-                        WIKI_THUMB_HTML+="    <img src=\"${t_img}\" alt=\"\" class=\"block-image-img\" style=\"width: inherit;\">"$'\n'
-                        WIKI_THUMB_HTML+="</figure>"
+        local t_img="${PAGE_VARS["page.thumb"]:-${PAGE_VARS["thumb"]:-${PAGE_THUMBS["$pagename"]:-}}}"
+        if [[ -z "$t_img" && -f "$file" ]]; then
+            local in_globals=0 g_line
+            while IFS= read -r g_line || [[ -n "$g_line" ]]; do
+                g_line="${g_line%$'\r'}"
+                if (( in_globals == 0 )); then
+                    [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals=1
+                else
+                    [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
+                    if [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*thumb:[[:space:]]*(.*)$ ]]; then
+                        t_img="${BASH_REMATCH[1]}"
+                        t_img="${t_img#"${t_img%%[![:space:]]*}"}"
+                        t_img="${t_img%"${t_img##*[![:space:]]}"}"
+                        t_img="${t_img#\"}"; t_img="${t_img%\"}"
+                        t_img="${t_img#\'}"; t_img="${t_img%\'}"
+                        break
                     fi
                 fi
+            done < "$file"
+        fi
+        if [[ -n "$t_img" ]]; then
+            if [[ "$t_img" == "./"* ]]; then
+                local dir_path="${current_dir//./\/}"
+                [[ "$dir_path" == "/" ]] && dir_path=""
+                t_img="/_assets${dir_path:+/$dir_path}/${t_img#./}"
+                t_img="${t_img%.*}.webp"
+            elif [[ "$t_img" != http://* && "$t_img" != https://* && "$t_img" != /* ]]; then
+                if [[ "$t_img" != *.* ]]; then
+                    if [[ -f "$BUILDDIR/_assets/${t_img}.webp" ]]; then t_img="${t_img}.webp"
+                    elif [[ -f "$BUILDDIR/_assets/${t_img}.png" ]]; then t_img="${t_img}.png"
+                    elif [[ -f "$BUILDDIR/_assets/${t_img}.jpg" ]]; then t_img="${t_img}.jpg"
+                    elif [[ -f "$BUILDDIR/_assets/${t_img}.jpeg" ]]; then t_img="${t_img}.jpeg"
+                    fi
+                fi
+                t_img="/_assets/${t_img}"
             fi
-        done < "$file"
+            WIKI_THUMB_HTML="<figure class=\"block-image\" style=\"display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;\">"$'\n'
+            WIKI_THUMB_HTML+="    <img src=\"${t_img}\" alt=\"\" class=\"block-image-img\" style=\"width: inherit;\">"$'\n'
+            WIKI_THUMB_HTML+="</figure>"
+        fi
     }
 
     __partial_tags() {
@@ -607,36 +558,42 @@ __partials__() {
         done
 
         WIKI_TAGS_HTML=""
-        local in_globals=0 g_line t_tags old_ifs t
-        local -a tag_arr
-        while IFS= read -r g_line || [[ -n "$g_line" ]]; do
-            g_line="${g_line%$'\r'}"
-            if (( in_globals == 0 )); then
-                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals=1
-            else
-                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
-                if [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*tags:[[:space:]]*(.*)$ ]]; then
-                    t_tags="${BASH_REMATCH[1]}"
-                    t_tags="${t_tags#"${t_tags%%[![:space:]]*}"}"
-                    t_tags="${t_tags%"${t_tags##*[![:space:]]}"}"
-                    if [[ -n "$t_tags" ]]; then
-                        WIKI_TAGS_HTML="<tags>"$'\n'
-                        WIKI_TAGS_HTML+="<prefix class=\"tags-prefix\">${t_prefix}</prefix>"$'\n'
-                        old_ifs="$IFS"
-                        IFS=","
-                        tag_arr=($t_tags)
-                        IFS="$old_ifs"
-                        for t in "${tag_arr[@]}"; do
-                            t="${t#"${t%%[![:space:]]*}"}"
-                            t="${t%"${t##*[![:space:]]}"}"
-                            [[ -z "$t" ]] && continue
-                            WIKI_TAGS_HTML+="<tag><a href=\"?search=tag:${t}\">${t}</a></tag>"$'\n'
-                        done
-                        WIKI_TAGS_HTML+="</tags>"
+        local t_tags="${PAGE_VARS["page.tags"]:-${PAGE_VARS["tags"]:-${PAGE_TAGS["$pagename"]:-}}}"
+        if [[ -z "$t_tags" && -f "$file" ]]; then
+            local in_globals=0 g_line
+            while IFS= read -r g_line || [[ -n "$g_line" ]]; do
+                g_line="${g_line%$'\r'}"
+                if (( in_globals == 0 )); then
+                    [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals=1
+                else
+                    [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
+                    if [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*tags:[[:space:]]*(.*)$ ]]; then
+                        t_tags="${BASH_REMATCH[1]}"
+                        t_tags="${t_tags#"${t_tags%%[![:space:]]*}"}"
+                        t_tags="${t_tags%"${t_tags##*[![:space:]]}"}"
+                        t_tags="${t_tags#\"}"; t_tags="${t_tags%\"}"
+                        t_tags="${t_tags#\'}"; t_tags="${t_tags%\'}"
+                        break
                     fi
                 fi
-            fi
-        done < "$file"
+            done < "$file"
+        fi
+        if [[ -n "$t_tags" ]]; then
+            WIKI_TAGS_HTML="<tags>"$'\n'
+            WIKI_TAGS_HTML+="<prefix class=\"tags-prefix\">${t_prefix}</prefix>"$'\n'
+            local old_ifs="$IFS"
+            IFS=","
+            local -a tag_arr=($t_tags)
+            IFS="$old_ifs"
+            local t
+            for t in "${tag_arr[@]}"; do
+                t="${t#"${t%%[![:space:]]*}"}"
+                t="${t%"${t##*[![:space:]]}"}"
+                [[ -z "$t" ]] && continue
+                WIKI_TAGS_HTML+="<tag><a href=\"?search=tag:${t}\">${t}</a></tag>"$'\n'
+            done
+            WIKI_TAGS_HTML+="</tags>"
+        fi
     }   
 
     __partial_related() {
@@ -652,21 +609,27 @@ __partials__() {
             fi
             str="${str#*${BASH_REMATCH[0]}}"
         done
-        local in_globals=0 g_line
-        while IFS= read -r g_line || [[ -n "$g_line" ]]; do
-            g_line="${g_line%$'\r'}"
-            if (( in_globals == 0 )); then
-                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals=1
-            else
-                [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
-                if [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*related:[[:space:]]*(.*)$ ]]; then
-                    local rel_val="${BASH_REMATCH[1]}"
-                    rel_val="${rel_val#"${rel_val%%[![:space:]]*}"}"
-                    rel_val="${rel_val%"${rel_val##*[![:space:]]}"}"
-                    [[ -n "$rel_val" ]] && args+=" ${rel_val}"
+        local rel_val="${PAGE_VARS["page.related"]:-${PAGE_VARS["related"]:-${PAGE_RELATED["$pagename"]:-}}}"
+        if [[ -z "$rel_val" && -f "$file" ]]; then
+            local in_globals=0 g_line
+            while IFS= read -r g_line || [[ -n "$g_line" ]]; do
+                g_line="${g_line%$'\r'}"
+                if (( in_globals == 0 )); then
+                    [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals=1
+                else
+                    [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
+                    if [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*related:[[:space:]]*(.*)$ ]]; then
+                        rel_val="${BASH_REMATCH[1]}"
+                        rel_val="${rel_val#"${rel_val%%[![:space:]]*}"}"
+                        rel_val="${rel_val%"${rel_val##*[![:space:]]}"}"
+                        rel_val="${rel_val#\"}"; rel_val="${rel_val%\"}"
+                        rel_val="${rel_val#\'}"; rel_val="${rel_val%\'}"
+                        break
+                    fi
                 fi
-            fi
-        done < "$file"
+            done < "$file"
+        fi
+        [[ -n "$rel_val" ]] && args+=" ${rel_val}"
         local out=""
         [[ -n "$title" ]] && out+="<h1>${title}</h1>"$'\n'
         out+="$(__listing_pages "$args")"

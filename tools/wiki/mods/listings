@@ -485,10 +485,12 @@ __listings__() {
                             fi
                             
                             local raw_id="${block_id:-${b_entity:-$first_val}}"
-                            local clean_id="$(__slugify "$raw_id")"
+                            __slugify_r "$raw_id"
+                            local clean_id="$REPLY"
                             local ref_key="$clean_id"
                             if [[ -n "$b_context" && "$raw_id" != *.* ]]; then
-                                ref_key="$(__slugify "${b_context}.${raw_id}")"
+                                __slugify_r "${b_context}.${raw_id}"
+                                ref_key="$REPLY"
                             fi
                             local anchor_id_slug="${ref_key//./-}"
                             local anchor_id="block-${in_block}-${anchor_id_slug}"

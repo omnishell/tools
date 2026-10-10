@@ -422,7 +422,7 @@ FLAGS:
     __wiki__.build() {
         # Byte semantics speed up string matching. Measure text with __char_len, not ${#var}.
         local LC_ALL=C
-        declare -gA SEARCH_INDEX_MAP=() LIST_HTML_MAP=() BLOCK_TITLE_KEYS=() PAGE_TITLE_KEYS=()
+        declare -gA SEARCH_INDEX_MAP=() LIST_HTML_MAP=() BLOCK_TITLE_KEYS=() PAGE_TITLE_KEYS=() LATEX_MEM_CACHE=()
         declare -p WIKIS >/dev/null 2>&1 || declare -g -a WIKIS=()
         
         local target="$1"; shift || true
@@ -482,9 +482,9 @@ FLAGS:
         [[ -n "$o_stat" ]] && STATICDIR="$o_stat"
         [[ -n "$o_assets" ]] && ASSETSDIR="$o_assets"
         
-        local -a _pages=() _global_pages=() _nested_pages=() build_targets=()
-        local WIKI_MENU_HTML="" WIKI_FEATURED_HTML=""
-        local -A PAGE_TITLES=() PAGE_WEIGHTS=() DIR_FILES_MAP=() CACHE_HASHES=()
+        local -a _pages=() _global_pages=() _nested_pages=() _SORTED_PAGES_LEAF_FIRST=() build_targets=()
+        local WIKI_MENU_HTML="" WIKI_FEATURED_HTML="" WIKI_SEARCH_JS=""
+        local -A PAGE_TITLES=() PAGE_WEIGHTS=() PAGE_TEMPLATES=() PAGE_TAGS=() PAGE_THUMBS=() PAGE_RELATED=() DIR_FILES_MAP=() CACHE_HASHES=() IS_DIR_PAGE=() DIR_BEST_PAGE=() DIR_BEST_WEIGHT=() SEARCH_BLOCK_TYPES=()
         
         local cache_dir="${o_cache:-$BUILDDIR/.cache}"
         local cache_file="$cache_dir/build_cache"

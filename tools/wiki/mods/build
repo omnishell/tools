@@ -61,11 +61,13 @@ __build__() {
             local p_vars="${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
             local file=""
             local implicit_weight=""
+            local initial_tmpl=""
             local OIFS="$IFS"; IFS=','
             for pair in $p_vars; do
                 local k="${pair%%:*}" v="${pair#*:}"
                 [[ "$k" == "path" ]] && file="$v"
                 [[ "$k" == "implicit_weight" ]] && implicit_weight="$v"
+                [[ "$k" == "template" ]] && initial_tmpl="$v"
             done
             IFS="$OIFS"
             
@@ -112,29 +114,25 @@ __build__() {
             local fm_title="" fm_weight=""
             
             if [[ -f "$file" ]]; then
-                __fm_val_r "$file" "title" && fm_title="$REPLY"
-                __fm_val_r "$file" "weight" && [[ -n "$REPLY" ]] && fm_weight="$REPLY"
+                local -A src_vars=()
+                __read_page_source "$file" src_vars "" SEARCH_BLOCK_TYPES BLOCK_TITLE_KEYS
                 
-                local in_globals=0 g_line
-                while IFS= read -r g_line || [[ -n "$g_line" ]]; do
-                    g_line="${g_line%$'\r'}"
-                    if (( in_globals == 0 )); then
-                        [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals=1
-                    else
-                        [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
-                        if [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*title:[[:space:]]*(.*)$ ]]; then
-                            local temp_title="${BASH_REMATCH[1]}"
-                            temp_title="${temp_title#"${temp_title%%[![:space:]]*}"}"
-                            temp_title="${temp_title%"${temp_title##*[![:space:]]}"}"
-                            [[ -n "$temp_title" ]] && fm_title="$temp_title"
-                        elif [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*(weight|weighted):[[:space:]]*(.*)$ ]]; then
-                            local temp_weight="${BASH_REMATCH[2]}"
-                            temp_weight="${temp_weight#"${temp_weight%%[![:space:]]*}"}"
-                            temp_weight="${temp_weight%"${temp_weight##*[![:space:]]}"}"
-                            [[ -n "$temp_weight" ]] && fm_weight="$temp_weight"
-                        fi
-                    fi
-                done < "$file"
+                fm_title="${src_vars["page.title"]:-${src_vars["title"]:-}}"
+                fm_weight="${src_vars["page.weight"]:-${src_vars["weight"]:-}}"
+                
+                local tmpl_val="${src_vars["page.template"]:-${src_vars["template"]:-$initial_tmpl}}"
+                [[ -n "$tmpl_val" ]] && PAGE_TEMPLATES["$p"]="$tmpl_val"
+                
+                local tag_val="${src_vars["page.tags"]:-${src_vars["tags"]:-}}"
+                [[ -n "$tag_val" ]] && PAGE_TAGS["$p"]="$tag_val"
+                
+                local thumb_val="${src_vars["page.thumb"]:-${src_vars["thumb"]:-}}"
+                [[ -n "$thumb_val" ]] && PAGE_THUMBS["$p"]="$thumb_val"
+                
+                local rel_val="${src_vars["page.related"]:-${src_vars["related"]:-}}"
+                [[ -n "$rel_val" ]] && PAGE_RELATED["$p"]="$rel_val"
+            elif [[ -n "$initial_tmpl" ]]; then
+                PAGE_TEMPLATES["$p"]="$initial_tmpl"
             fi
             
             if [[ -z "$fm_weight" && -n "$implicit_weight" ]]; then
@@ -162,6 +160,28 @@ __build__() {
             if [ "${#parts[@]}" -ge 2 ]; then _nested_pages+=("$p")
             else _global_pages+=("${parts[0]}"); fi
         done
+
+        for p in "${_pages[@]}"; do
+            local w="${PAGE_WEIGHTS[$p]:-9999999}"
+            local -a p_parts=()
+            local OIFS="$IFS"; IFS='.'; read -ra p_parts <<< "$p"; IFS="$OIFS"
+            local prefix=""
+            local idx
+            for ((idx=0; idx<${#p_parts[@]}-1; idx++)); do
+                if [[ -z "$prefix" ]]; then prefix="${p_parts[$idx]}"; else prefix="${prefix}.${p_parts[$idx]}"; fi
+                IS_DIR_PAGE["$prefix"]=1
+                local cur_best_w="${DIR_BEST_WEIGHT["$prefix"]:-9999999}"
+                local cur_best_p="${DIR_BEST_PAGE["$prefix"]:-}"
+                if (( 10#$w < 10#$cur_best_w )); then
+                    DIR_BEST_WEIGHT["$prefix"]="$w"
+                    DIR_BEST_PAGE["$prefix"]="$p"
+                elif (( 10#$w == 10#$cur_best_w )); then
+                    if [[ -z "$cur_best_p" || "$p" < "$cur_best_p" ]]; then
+                        DIR_BEST_PAGE["$prefix"]="$p"
+                    fi
+                fi
+            done
+        done
     }
 
     __build_assets() {
@@ -182,6 +202,11 @@ __build__() {
                 cwebp_bin="cwebp"
             fi
 
+            local max_jobs
+            max_jobs="$(nproc 2>/dev/null || echo 4)"
+            (( max_jobs < 1 )) && max_jobs=4
+            local running_jobs=0
+
             _process_dir() {
                 local dir="${1%/}"
                 local img base
@@ -196,12 +221,18 @@ __build__() {
                                     __log "Obtaining webp for: $img" -t info -l wiki
                                     if [[ -n "$cwebp_bin" ]]; then
                                         __log "using cwep..."
-                                        "$cwebp_bin" -q 80 "$img" -o "${base}.webp"
+                                        "$cwebp_bin" -q 80 "$img" -o "${base}.webp" >/dev/null 2>&1 &
+                                        (( running_jobs++ ))
                                     elif command -v convert >/dev/null 2>&1; then
                                         __log "using convert..."
-                                        convert "$img" -quality 80 "${base}.webp" >/dev/null 2>&1
+                                        convert "$img" -quality 80 "${base}.webp" >/dev/null 2>&1 &
+                                        (( running_jobs++ ))
                                     else
                                         __error "aaaaaaaa"
+                                    fi
+                                    if (( running_jobs >= max_jobs )); then
+                                        wait -n 2>/dev/null || wait
+                                        (( running_jobs-- ))
                                     fi
                                 fi
                                 ;;
@@ -211,6 +242,7 @@ __build__() {
             }
 
             _process_dir "$ASSETSDIR"
+            wait
 
             cp -r "${ASSETSDIR%/}"/* "$BUILDDIR/_assets/" 2>/dev/null || true
 
@@ -245,9 +277,18 @@ __build__() {
                 [[ -n "$f" ]] && CACHE_HASHES["$f"]="$h"
             done < "$cache_file"
         fi
+
+        local latex_cache_file="$cache_dir/latex.cache"
+        if [[ -f "$latex_cache_file" && $force_rebuild -eq 0 ]]; then
+            local lk lv
+            while IFS=$'\t' read -r lk lv; do
+                [[ -n "$lk" ]] && LATEX_MEM_CACHE["$lk"]="${lv//$'\x01'/$'\n'}"
+            done < "$latex_cache_file"
+        fi
     }
 
     __build_partials() {
+        __sort_page_hierarchy _pages _SORTED_PAGES_LEAF_FIRST "." "leaf_first"
         __partial_featured
         __partial_menu
         
@@ -295,6 +336,28 @@ __build__() {
             done < <(cksum -- "${hash_files[@]}")
         fi
         
+        local -A all_search_keys=()
+        local sk
+        for sk in "${!SEARCH_BLOCK_TYPES[@]}"; do all_search_keys["$sk"]=1; done
+        all_search_keys["page"]=1
+
+        local pre_search_js="const SEARCH_CONFIG = ["
+        local sf=1
+        for sk in "${!all_search_keys[@]}"; do
+            (( sf == 0 )) && pre_search_js+=","
+            local fallback="${sk^}"
+            local tkey="${BLOCK_TITLE_KEYS[$sk]:-$sk}"
+            [[ "$sk" == "page" ]] && tkey="pagename"
+            [[ "$sk" == "table" ]] && tkey="caption"
+            [[ "$sk" == "tag" ]] && tkey="pagename"
+            pre_search_js+=" { id: '$sk', others: ['${sk}s'], titleKey: '$tkey', fallback: '$fallback' }"
+            sf=0
+        done
+        pre_search_js+=" ];"
+        local WIKI_SEARCH_JS="$pre_search_js"
+
+        local -A LAYOUT_CACHE=()
+
         for p in "${build_targets[@]}"; do
             local p_vars="${WIKI_PAGE_VARS[${w_name}::${p}]:-}"
             local file="" p_tmpl=""
@@ -312,59 +375,22 @@ __build__() {
             local current_dir="${p%.*}"
             if [[ "$current_dir" == "$p" ]]; then current_dir="."; fi
             
-            local in_globals=0 g_line
-            while IFS= read -r g_line || [[ -n "$g_line" ]]; do
-                g_line="${g_line%$'\r'}"
-                if (( in_globals == 0 )); then
-                    [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals=1
-                else
-                    [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
-                    if [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*template:[[:space:]]*(.*)$ ]]; then
-                        local temp_tmpl="${BASH_REMATCH[1]}"
-                        temp_tmpl="${temp_tmpl#"${temp_tmpl%%[![:space:]]*}"}"
-                        temp_tmpl="${temp_tmpl%"${temp_tmpl##*[![:space:]]}"}"
-                        [[ "$temp_tmpl" != *.* ]] && temp_tmpl="${temp_tmpl}.html"
-                        [[ -n "$temp_tmpl" ]] && p_tmpl="${TEMPLATEDIR}/${temp_tmpl}"
-                    fi
-                fi
-            done < "$file"
-            
+            [[ -z "$p_tmpl" ]] && p_tmpl="${PAGE_TEMPLATES["$p"]:-}"
             if [[ -z "$p_tmpl" ]]; then
                 local idx_slug="${current_dir}.index"
                 [[ "$current_dir" == "." ]] && idx_slug="index"
-                
                 if [[ "$p" != "$idx_slug" ]]; then
-                    local idx_vars="${WIKI_PAGE_VARS[${w_name}::${idx_slug}]:-}"
-                    if [[ -n "$idx_vars" ]]; then
-                        local idx_file=""
-                        local OIFS="$IFS"; IFS=','
-                        for pair in $idx_vars; do
-                            local k="${pair%%:*}" v="${pair#*:}"
-                            [[ "$k" == "path" ]] && idx_file="$v"
-                        done
-                        IFS="$OIFS"
-                        
-                        if [[ -f "$idx_file" ]]; then
-                            local in_globals_idx=0 g_line_idx
-                            while IFS= read -r g_line_idx || [[ -n "$g_line_idx" ]]; do
-                                g_line_idx="${g_line_idx%$'\r'}"
-                                if (( in_globals_idx == 0 )); then
-                                    [[ "$g_line_idx" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals_idx=1
-                                else
-                                    [[ "$g_line_idx" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
-                                    if [[ "$g_line_idx" =~ ^[[:space:]]*::[[:space:]]*template:[[:space:]]*(.*)$ ]]; then
-                                        local temp_tmpl="${BASH_REMATCH[1]}"
-                                        temp_tmpl="${temp_tmpl#"${temp_tmpl%%[![:space:]]*}"}"
-                                        temp_tmpl="${temp_tmpl%"${temp_tmpl##*[![:space:]]}"}"
-                                        [[ "$temp_tmpl" != *.* ]] && temp_tmpl="${temp_tmpl}.html"
-                                        [[ -n "$temp_tmpl" ]] && p_tmpl="${TEMPLATEDIR}/${temp_tmpl}"
-                                    fi
-                                fi
-                            done < "$idx_file"
-                        fi
-                    fi
+                    p_tmpl="${PAGE_TEMPLATES["$idx_slug"]:-}"
                 fi
             fi
+
+            if [[ -n "$p_tmpl" && "$p_tmpl" != *.* ]]; then
+                p_tmpl="${p_tmpl}.html"
+            fi
+            if [[ -n "$p_tmpl" && "$p_tmpl" != /* && "$p_tmpl" != "${TEMPLATEDIR}/"* ]]; then
+                p_tmpl="${TEMPLATEDIR}/${p_tmpl}"
+            fi
+
             local page_tmpl_raw="${p_tmpl:-$TEMPLATEDIR}"
             if [[ -n "${WIKI_TEMPLATE_VARS[$page_tmpl_raw]:-}" ]]; then
                 page_tmpl_raw="${WIKI_TEMPLATE_VARS[$page_tmpl_raw]}"
@@ -411,8 +437,11 @@ __build__() {
             fi
             mkdir -p "${out_path%/*}"
             
-            local RAW_LAYOUT
-            read -r -d '' RAW_LAYOUT < "$page_tmpl_raw" || true
+            local RAW_LAYOUT="${LAYOUT_CACHE["$page_tmpl_raw"]:-}"
+            if [[ -z "$RAW_LAYOUT" ]]; then
+                read -r -d '' RAW_LAYOUT < "$page_tmpl_raw" || true
+                LAYOUT_CACHE["$page_tmpl_raw"]="$RAW_LAYOUT"
+            fi
             local -a layout_lines
             mapfile -t layout_lines <<< "$RAW_LAYOUT"
             
@@ -442,45 +471,67 @@ __build__() {
             (( ${#idx_stale[@]} )) && rm -f -- "${idx_stale[@]}"
             CACHE_HASHES["$file"]="$file_hash"
         done
-        local search_js="const SEARCH_CONFIG = ["
-        local sf=1
+
+        local search_changed=0
         for k in "${!SEARCH_INDEX_MAP[@]}"; do
-            (( sf == 0 )) && search_js+=","
-            local fallback="${k^}"
-            local tkey="${BLOCK_TITLE_KEYS[$k]:-$k}"
-            [[ "$k" == "page" ]] && tkey="pagename"
-            [[ "$k" == "table" ]] && tkey="caption"
-            [[ "$k" == "tag" ]] && tkey="pagename"
-            search_js+=" { id: '$k', others: ['${k}s'], titleKey: '$tkey', fallback: '$fallback' }"
-            sf=0
-        done
-        search_js+=" ];"
-        local search_marker="const SEARCH_CONFIG = ["
-        for p in "${build_targets[@]}"; do
-            local out_path="$BUILDDIR/${p//./\/}.html"
-            if [[ -f "$out_path" ]]; then
-                local html_content
-                html_content="$(<"$out_path")"
-                local pre="${html_content%"$search_marker"*}"
-                if [[ "$html_content" == *"%%WIKI_SEARCH_CONFIG%%"* ]]; then
-                    html_content="${html_content//%%WIKI_SEARCH_CONFIG%%/$search_js}"
-                    printf "%s" "$html_content" > "$out_path"
-                elif (( ${#pre} < ${#html_content} )); then
-                    local post="${html_content:${#pre}+${#search_marker}}"
-                    post="${post#*\];}"
-                    html_content="${pre}${search_js}${post}"
-                    printf "%s" "$html_content" > "$out_path"
-                fi
+            if [[ -z "${all_search_keys[$k]:-}" ]]; then
+                search_changed=1
+                break
             fi
         done
+
+        if (( search_changed )); then
+            local search_js="const SEARCH_CONFIG = ["
+            local sf=1
+            for k in "${!SEARCH_INDEX_MAP[@]}"; do
+                (( sf == 0 )) && search_js+=","
+                local fallback="${k^}"
+                local tkey="${BLOCK_TITLE_KEYS[$k]:-$k}"
+                [[ "$k" == "page" ]] && tkey="pagename"
+                [[ "$k" == "table" ]] && tkey="caption"
+                [[ "$k" == "tag" ]] && tkey="pagename"
+                search_js+=" { id: '$k', others: ['${k}s'], titleKey: '$tkey', fallback: '$fallback' }"
+                sf=0
+            done
+            search_js+=" ];"
+            local search_marker="const SEARCH_CONFIG = ["
+            for p in "${build_targets[@]}"; do
+                local out_path="$BUILDDIR/${p//./\/}.html"
+                if [[ -f "$out_path" ]]; then
+                    local html_content
+                    html_content="$(<"$out_path")"
+                    local pre="${html_content%"$search_marker"*}"
+                    if [[ "$html_content" == *"%%WIKI_SEARCH_CONFIG%%"* ]]; then
+                        html_content="${html_content//%%WIKI_SEARCH_CONFIG%%/$search_js}"
+                        printf "%s" "$html_content" > "$out_path"
+                    elif (( ${#pre} < ${#html_content} )); then
+                        local post="${html_content:${#pre}+${#search_marker}}"
+                        post="${post#*\];}"
+                        html_content="${pre}${search_js}${post}"
+                        printf "%s" "$html_content" > "$out_path"
+                    fi
+                fi
+            done
+        fi
     }
 
     __build_search_index() {
-        > "$cache_file"
-        for f in "${!CACHE_HASHES[@]}"; do
-            echo "${CACHE_HASHES[$f]} $f" >> "$cache_file"
-        done
+        {
+            for f in "${!CACHE_HASHES[@]}"; do
+                printf "%s %s\n" "${CACHE_HASHES[$f]}" "$f"
+            done
+        } > "$cache_file"
         __save
+
+        if (( ${#LATEX_MEM_CACHE[@]} > 0 )); then
+            local lk lv
+            {
+                for lk in "${!LATEX_MEM_CACHE[@]}"; do
+                    lv="${LATEX_MEM_CACHE[$lk]}"
+                    printf "%s\t%s\n" "$lk" "${lv//$'\n'/$'\x01'}"
+                done
+            } > "$cache_dir/latex.cache"
+        fi
         
         local json_content="{"
         local first=1

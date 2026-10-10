@@ -63,7 +63,7 @@ COMMANDS:
     author ls                List registered authors
     author new/set           <author> -w/--wiki <wiki> -n/--name <name> -u/--url <url>
     author rm                <author>
-    build                    <wiki>[.<page>] [--rebuild] [-c] [-d] [-t] [-s] [-a] [-C/--cache <dir>]
+    build                    <wiki>[.<page>] [--rebuild] [-c] [-d] [-t] [-s] [-a] [-C/--cache <dir>] [-j/--jobs <N>]
     serve                    <wiki> [-p/--port <port>]
 FLAGS:
   -h, --help    Show this help""" >&2
@@ -432,7 +432,7 @@ FLAGS:
             target="${WIKIS[0]:-}"
         fi
         
-        local o_cont="" o_dist="" o_tmpl="" o_stat="" o_assets="" o_cache=""
+        local o_cont="" o_dist="" o_tmpl="" o_stat="" o_assets="" o_cache="" o_jobs=""
         while [[ $# -gt 0 ]]; do
             case "$1" in
                 -c|--contents) o_cont="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
@@ -440,6 +440,7 @@ FLAGS:
                 -t|--templates|--template) o_tmpl="$2"; shift 2 ;;
                 -s|--static) o_stat="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
                 -a|--assets) o_assets="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+                -j|--jobs) o_jobs="$2"; shift 2 ;;
                 -C|--cache)
                      if [[ "$2" == /* ]]; then o_cache="$2"; else o_cache="$PWD/$2"; fi
                     shift 2 ;;
@@ -485,14 +486,24 @@ FLAGS:
         local -a _pages=() _global_pages=() _nested_pages=() _SORTED_PAGES_LEAF_FIRST=() build_targets=()
         local WIKI_MENU_HTML="" WIKI_FEATURED_HTML="" WIKI_SEARCH_JS=""
         local -A PAGE_TITLES=() PAGE_WEIGHTS=() PAGE_TEMPLATES=() PAGE_TAGS=() PAGE_THUMBS=() PAGE_RELATED=() DIR_FILES_MAP=() CACHE_HASHES=() IS_DIR_PAGE=() DIR_BEST_PAGE=() DIR_BEST_WEIGHT=() SEARCH_BLOCK_TYPES=()
+        local -A DIRTY_PAGES=() PAGE_FILES=() PAGE_MTIME_SIZE=()
         
         local cache_dir="${o_cache:-$BUILDDIR/.cache}"
         local cache_file="$cache_dir/build_cache"
         local tmpl_cache_file="$cache_dir/tmpl_cache"
+        local meta_cache_file="$cache_dir/meta.cache"
         local force_rebuild=$rebuild
+        local SHORT_CIRCUIT=0
+        local max_jobs="${o_jobs:-}"
+        [[ -z "$max_jobs" ]] && max_jobs="$(nproc 2>/dev/null || echo 4)"
+        (( max_jobs < 1 )) && max_jobs=4
         
-        __build_init
         __build_cache
+        __build_init
+        if (( SHORT_CIRCUIT == 1 )); then
+            __log "Wiki '$w_name' is up to date (no changes detected)." -t success -l wiki
+            return 0
+        fi
         __build_assets
         __build_partials
         __build_main

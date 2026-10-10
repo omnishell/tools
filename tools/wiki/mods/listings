@@ -2,7 +2,8 @@
 
 __listings__() {
 
-    __listing_pages() {
+    __listing_pages_r() {
+        REPLY=""
         local args="$*"
         local l_root="$current_dir"
         local l_pattern="*"
@@ -287,10 +288,17 @@ __listings__() {
             fi
         fi
         list_html+="</ul>"$'\n'"</list>"
-        printf "%s" "$list_html"
+        REPLY="$list_html"
+        return 0
     }
 
-    __listing_blocks() {
+    __listing_pages() {
+        __listing_pages_r "$@"
+        printf "%s" "$REPLY"
+    }
+
+    __listing_blocks_r() {
+        REPLY=""
         local b_type="$1"
         shift
         local singular="${b_type%s}"
@@ -539,7 +547,13 @@ __listings__() {
             list_html+="</ol>"$'\n'
         fi
         list_html+="</list>"
-        printf "%s" "$list_html"
+        REPLY="$list_html"
+        return 0
+    }
+
+    __listing_blocks() {
+        __listing_blocks_r "$@"
+        printf "%s" "$REPLY"
     }
     
 

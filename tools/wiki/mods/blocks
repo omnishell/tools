@@ -135,7 +135,7 @@ __blocks__() {
                 dv="$rel_out"
                 dk="$prefix_name"
             elif [[ "${BLOCK_VALS[$k]}" == "$dv" ]]; then
-                dv="$(__parse_block_field "$dv")"
+                __parse_block_field_r "$dv"; dv="$REPLY"
             fi
             html+="        <field id=\"field-${bname}-${dk}-${anchor_id_slug}\" class=\"field-${bname}-${dk}\">"$'\n'
             html+="            <prefix id=\"prefix-${bname}-${dk}-${anchor_id_slug}\" class=\"prefix-${bname}-${dk}\">${dk}: </prefix><div id=\"text-${bname}-${dk}-${anchor_id_slug}\" class=\"text-prefix-${bname}-${dk}\">${dv}</div>"$'\n'
@@ -199,7 +199,9 @@ __blocks__() {
         q_text="${q_text#"${q_text%%[![:space:]]*}"}"
         q_text="${q_text%"${q_text##*[![:space:]]}"}"
         
-        if type __parse_block_field >/dev/null 2>&1; then
+        if type __parse_block_field_r >/dev/null 2>&1; then
+            __parse_block_field_r "$q_text"; q_text="$REPLY"
+        elif type __parse_block_field >/dev/null 2>&1; then
             q_text="$(__parse_block_field "$q_text")"
         else
             q_text="${q_text//$'\n'/<br>}"
@@ -1206,7 +1208,9 @@ __blocks__() {
             elif [[ "$current_key" == "style" ]]; then t_style="$current_val"; fi
         fi
         
-        if type __parse_block_field >/dev/null 2>&1; then
+        if type __parse_block_field_r >/dev/null 2>&1; then
+            __parse_block_field_r "$t_text"; t_text="$REPLY"
+        elif type __parse_block_field >/dev/null 2>&1; then
             t_text="$(__parse_block_field "$t_text")"
         else
             t_text="${t_text//$'\n'/<br>}"
@@ -1260,7 +1264,9 @@ __blocks__() {
             esac
         fi
         
-        if type __parse_block_field >/dev/null 2>&1; then
+        if type __parse_block_field_r >/dev/null 2>&1; then
+            __parse_block_field_r "$h_hide"; h_hide="$REPLY"
+        elif type __parse_block_field >/dev/null 2>&1; then
             h_hide="$(__parse_block_field "$h_hide")"
         fi
         
@@ -1427,6 +1433,8 @@ __blocks__() {
             c_text="${c_text//\\n/$'\n'}"
             if type __parse_multiline >/dev/null 2>&1; then
                 c_text="$(__parse_multiline "$c_text")"
+            elif type __parse_block_field_r >/dev/null 2>&1; then
+                __parse_block_field_r "$c_text"; c_text="$REPLY"
             elif type __parse_block_field >/dev/null 2>&1; then
                 c_text="$(__parse_block_field "$c_text")"
             fi

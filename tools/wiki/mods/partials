@@ -87,7 +87,8 @@ __partials__() {
         done
     }
 
-    __partial_menu() {
+    __partial_menu_r() {
+        REPLY=""
         local m_root="" m_depth="999" m_type="" m_root_label="" m_page_label="title" m_exclude="" m_closed="-1" m_open_current="0" m_collapsible="false"
         if [[ $# -gt 0 ]]; then
             local str="$*"
@@ -291,7 +292,7 @@ __partials__() {
                 c_menu+="</details>"$'\n'
             fi
             
-            printf "%s" "$c_menu"
+            REPLY="$c_menu"
             return 0
         fi
         
@@ -354,6 +355,17 @@ __partials__() {
             WIKI_MENU_HTML+="</ul></details></li>"$'\n'
         done
         WIKI_MENU_HTML+="</ul>"$'\n'
+        REPLY="$WIKI_MENU_HTML"
+        return 0
+    }
+
+    __partial_menu() {
+        if [[ $# -gt 0 ]]; then
+            __partial_menu_r "$@"
+            printf "%s" "$REPLY"
+        else
+            __partial_menu_r
+        fi
     } 
 
 
@@ -429,7 +441,7 @@ __partials__() {
         fi
     }    
 
-    __partial_breadcrumb() {
+    __partial_breadcrumb_r() {
         local b_root_label="Home"
         local b_page_label="title"
         local b_sep="/"
@@ -500,7 +512,13 @@ __partials__() {
             fi
         done
         out+="</breadcrumb>"
-        printf "%s" "$out"
+        REPLY="$out"
+        return 0
+    }
+
+    __partial_breadcrumb() {
+        __partial_breadcrumb_r "$@"
+        printf "%s" "$REPLY"
     }   
 
     __partial_thumb() {
@@ -596,7 +614,7 @@ __partials__() {
         fi
     }   
 
-    __partial_related() {
+    __partial_related_r() {
         local title="" args="root=/"
         local str="$*"
         while [[ "$str" =~ ([a-zA-Z_.-]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
@@ -632,11 +650,18 @@ __partials__() {
         [[ -n "$rel_val" ]] && args+=" ${rel_val}"
         local out=""
         [[ -n "$title" ]] && out+="<h1>${title}</h1>"$'\n'
-        out+="$(__listing_pages "$args")"
-        printf "%s" "$out"
+        __listing_pages_r "$args"
+        out+="$REPLY"
+        REPLY="$out"
+        return 0
+    }
+
+    __partial_related() {
+        __partial_related_r "$@"
+        printf "%s" "$REPLY"
     }
         
-    __partial_head() {
+    __partial_head_r() {
         local h_title="" h_css="" h_js="" h_thumb=""
         local str="$*"
         while [[ "$str" =~ ([a-zA-Z_.-]+)=([^\"\'[:space:]]+|\"([^\"]+)\"|\'([^\']+)\') ]]; do
@@ -690,7 +715,13 @@ __partials__() {
         });
     </script>"$'\n'
         out+="</head>"
-        printf "%s" "$out"
+        REPLY="$out"
+        return 0
+    }
+
+    __partial_head() {
+        __partial_head_r "$@"
+        printf "%s" "$REPLY"
     }
 
     __partial_settings() {

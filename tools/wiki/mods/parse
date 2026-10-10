@@ -276,9 +276,10 @@ __parse__() {
         done
     }   
     
-    __parse_block_field() {
+    __parse_block_field_r() {
         local _field_ref="$1"
-        [[ -z "$_field_ref" ]] && return
+        REPLY=""
+        [[ -z "$_field_ref" ]] && return 0
         _field_ref="${_field_ref//$'\t'/    }"
         _field_ref="${_field_ref//$'\xC2\xA0'/ }"
         local tmp nl=$'\n' cr=$'\r'
@@ -470,7 +471,13 @@ __parse__() {
             LIST_INDENTS=()
             LIST_TYPES=()
         fi
-        printf "%s" "$out"
+        REPLY="$out"
+        return 0
+    }
+
+    __parse_block_field() {
+        __parse_block_field_r "$@"
+        printf "%s" "$REPLY"
     }    
 
     __parse_code() {
@@ -799,7 +806,12 @@ __parse__() {
         while [[ "$line" =~ \{\{[[:space:]]*list\.pages([[:space:]]+([^}]+))?[[:space:]]*\}\} ]]; do
             local full_match="${BASH_REMATCH[0]}"
             local args="${BASH_REMATCH[2]:-}"
-            local list_html="$(__listing_pages "$args")"
+            local list_html=""
+            if type __listing_pages_r >/dev/null 2>&1; then
+                __listing_pages_r "$args"; list_html="$REPLY"
+            else
+                list_html="$(__listing_pages "$args")"
+            fi
             line="${line/"$full_match"/$list_html}"
             matched=1
         done
@@ -808,7 +820,12 @@ __parse__() {
             local full_match="${BASH_REMATCH[0]}"
             local b_type="${BASH_REMATCH[1]}"
             local args="${BASH_REMATCH[3]:-}"
-            local list_html="$(__listing_blocks "$b_type" "$args")"
+            local list_html=""
+            if type __listing_blocks_r >/dev/null 2>&1; then
+                __listing_blocks_r "$b_type" "$args"; list_html="$REPLY"
+            else
+                list_html="$(__listing_blocks "$b_type" "$args")"
+            fi
             line="${line/"$full_match"/$list_html}"
             matched=1
         done
@@ -817,7 +834,12 @@ __parse__() {
             local full_match="${BASH_REMATCH[0]}"
             local l_type="${BASH_REMATCH[1]}"
             local l_path="${BASH_REMATCH[3]}"
-            local list_html="$(__listing_blocks "$l_type" "$l_path")"
+            local list_html=""
+            if type __listing_blocks_r >/dev/null 2>&1; then
+                __listing_blocks_r "$l_type" "$l_path"; list_html="$REPLY"
+            else
+                list_html="$(__listing_blocks "$l_type" "$l_path")"
+            fi
             line="${line/"$full_match"/$list_html}"
             matched=1
         done

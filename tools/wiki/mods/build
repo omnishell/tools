@@ -513,7 +513,6 @@ __build__() {
         local sk
         for sk in "${!SEARCH_BLOCK_TYPES[@]}"; do all_search_keys["$sk"]=1; done
         all_search_keys["page"]=1
-
         local pre_search_js="const SEARCH_CONFIG = ["
         local sf=1
         for sk in "${!all_search_keys[@]}"; do
@@ -529,10 +528,45 @@ __build__() {
         pre_search_js+=" ];"
         local WIKI_SEARCH_JS="$pre_search_js"
 
+        for p in "${_pages[@]}"; do
+            local p_file="${PAGE_FILES[$p]:-}"
+            [[ ! -f "$p_file" ]] && continue
+            local in_b="" b_id="" b_ctx="" b_entry="" first_v=""
+            while IFS= read -r l || [[ -n "$l" ]]; do
+                l="${l%$'\r'}"
+                if [[ -z "$in_b" ]]; then
+                    if [[ "$l" =~ ^[[:space:]]*\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
+                        in_b="${BASH_REMATCH[1]}"; b_id="" ; b_ctx="" ; b_entry="" ; first_v=""
+                    fi
+                else
+                    if [[ "$l" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]]; then
+                        local raw_id="${b_id:-${b_entry:-$first_v}}"
+                        if [[ -n "$raw_id" ]]; then
+                            __slugify_r "$raw_id"; local clean_id="$REPLY"; local ref_key="$clean_id"
+                            if [[ -n "$b_ctx" && "$raw_id" != *.* ]]; then
+                                __slugify_r "${b_ctx}.${raw_id}"; ref_key="$REPLY"
+                            fi
+                            local anchor_id="block-${in_b}-${ref_key//./-}"
+                            WIKI_REFS["${in_b}::${ref_key}"]="${p}:${anchor_id}"
+                            WIKI_REFS["${w_name}::${ENV:-}::${in_b}::${ref_key}"]="${p}:${anchor_id}"
+                        fi
+                        in_b=""
+                    elif [[ "$l" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_.-]+):[[:space:]]*(.*)$ ]]; then
+                        local k="${BASH_REMATCH[1]}" v="${BASH_REMATCH[2]}"
+                        v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+                        if [[ "$k" == "__id__" ]]; then b_id="$v"
+                        elif [[ "$k" == "__context__" || "$k" == "context" ]]; then b_ctx="$v"
+                        elif [[ "$k" == "__entry__" ]]; then b_entry="$v"
+                        elif [[ -z "$first_v" && "$k" != "__refs__" ]]; then first_v="$v"
+                        fi
+                    fi
+                fi
+            done < "$p_file"
+        done
+        
         local -A LAYOUT_CACHE=()
         local -a render_targets=()
         local -A page_file_map=() page_tmpl_map=() page_curdir_map=() page_outpath_map=() page_hash_map=()
-
         for p in "${build_targets[@]}"; do
             local file="${PAGE_FILES[$p]:-}"
             local p_tmpl="${PAGE_TEMPLATES[$p]:-}"
@@ -561,14 +595,12 @@ __build__() {
                     p_tmpl="${PAGE_TEMPLATES["$idx_slug"]:-}"
                 fi
             fi
-
             if [[ -n "$p_tmpl" && "$p_tmpl" != *.* ]]; then
                 p_tmpl="${p_tmpl}.html"
             fi
             if [[ -n "$p_tmpl" && "$p_tmpl" != /* && "$p_tmpl" != "${TEMPLATEDIR}/"* ]]; then
                 p_tmpl="${TEMPLATEDIR}/${p_tmpl}"
             fi
-
             local page_tmpl_raw="${p_tmpl:-$TEMPLATEDIR}"
             if [[ -n "${WIKI_TEMPLATE_VARS[$page_tmpl_raw]:-}" ]]; then
                 page_tmpl_raw="${WIKI_TEMPLATE_VARS[$page_tmpl_raw]}"
@@ -592,13 +624,11 @@ __build__() {
             page_curdir_map["$p"]="$current_dir"
             page_outpath_map["$p"]="$out_path"
             page_hash_map["$p"]="$file_hash"
-
             if [[ $force_rebuild -eq 0 && "${DIRTY_PAGES[$p]:-1}" -eq 0 && "${CACHE_HASHES[$file]:-}" == "$file_hash" && -f "$out_path" ]]; then
                 continue
             fi
             render_targets+=("$p")
         done
-
         if (( ${#render_targets[@]} > 1 && max_jobs > 1 )); then
             local running_jobs=0
             for p in "${render_targets[@]}"; do
@@ -608,18 +638,15 @@ __build__() {
                 local out_path="${page_outpath_map[$p]}"
                 local file_hash="${page_hash_map[$p]}"
                 local pagename="$p"
-
                 (
                     mkdir -p "${out_path%/*}"
                     local RAW_LAYOUT
                     read -r -d '' RAW_LAYOUT < "$page_tmpl_raw" || true
                     local -a layout_lines
                     mapfile -t layout_lines <<< "$RAW_LAYOUT"
-
                     declare -A SEARCH_INDEX_MAP=()
                     local -A PAGE_TITLE_KEYS=()
                     __render_main "$file" "$pagename" "$out_path" "$current_dir"
-
                     local -A idx_written=()
                     for k in "${!SEARCH_INDEX_MAP[@]}"; do
                         local new_content="${SEARCH_INDEX_MAP[$k]}"
@@ -653,7 +680,6 @@ __build__() {
                 local out_path="${page_outpath_map[$p]}"
                 local file_hash="${page_hash_map[$p]}"
                 local pagename="$p"
-
                 mkdir -p "${out_path%/*}"
                 local RAW_LAYOUT="${LAYOUT_CACHE["$page_tmpl_raw"]:-}"
                 if [[ -z "$RAW_LAYOUT" ]]; then
@@ -662,12 +688,9 @@ __build__() {
                 fi
                 local -a layout_lines
                 mapfile -t layout_lines <<< "$RAW_LAYOUT"
-
                 SEARCH_INDEX_MAP=()
                 PAGE_TITLE_KEYS=()
-
                 __render_main "$file" "$pagename" "$out_path" "$current_dir"
-
                 local -A idx_written=()
                 for k in "${!SEARCH_INDEX_MAP[@]}"; do
                     local new_content="${SEARCH_INDEX_MAP[$k]}"
@@ -688,8 +711,7 @@ __build__() {
                 printf "%s\t%s\n" "$file" "$file_hash" > "$cache_dir/${pagename}.done"
             done
         fi
-
-        # Replay index chunks for all build targets sequentially and update cache hashes
+        
         SEARCH_INDEX_MAP=()
         for p in "${build_targets[@]}"; do
             local pagename="$p"
@@ -701,7 +723,6 @@ __build__() {
                 [[ -n "$df" && -n "$dh" ]] && CACHE_HASHES["$df"]="$dh"
                 rm -f "$done_marker"
             fi
-
             local -a replay_names=() replay_keys=() replay_chunks=()
             local replay_ok=1
             for idx_f in "$cache_dir/$pagename"_index_*.json; do
@@ -725,7 +746,6 @@ __build__() {
                 done
             fi
         done
-
         local search_changed=0
         for k in "${!SEARCH_INDEX_MAP[@]}"; do
             if [[ -z "${all_search_keys[$k]:-}" ]]; then
@@ -733,7 +753,6 @@ __build__() {
                 break
             fi
         done
-
         if (( search_changed )); then
             local search_js="const SEARCH_CONFIG = ["
             local sf=1
@@ -767,7 +786,7 @@ __build__() {
                 fi
             done
         fi
-    }
+    }   
 
     __build_search_index() {
         {

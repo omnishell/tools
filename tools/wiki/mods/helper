@@ -19,11 +19,10 @@ __helper__() {
         s="${s//$'\xC3\xB3'/o}"; s="${s//$'\xC3\xB2'/o}"; s="${s//$'\xC3\xB5'/o}"; s="${s//$'\xC3\xB4'/o}"; s="${s//$'\xC3\xB6'/o}"
         s="${s//$'\xC3\xBA'/u}"; s="${s//$'\xC3\xB9'/u}"; s="${s//$'\xC3\xBB'/u}"; s="${s//$'\xC3\xBC'/u}"
         s="${s//$'\xC3\xA7'/c}"; s="${s//$'\xC3\xB1'/n}"
-        s="${s//[^a-z0-9_.-]/}"
+        s="${s//[^a-z0-9_./-]/}"
         [[ "$s" =~ ^-[neE]+$ ]] && s=""
         REPLY="$s"
-    }
-   
+    }   
 
     __char_len() {
         local s="${1//[$'\x80'-$'\xbf']/}"
@@ -45,17 +44,31 @@ __helper__() {
         printf "%s" "$REPLY"
     }    
         
-    __serialize_assoc() {
+    __serialize_assoc_r() {
         local arr_name="$1" key val
         local -n arr="$arr_name"
-        echo -n "declare -A ${arr_name}=("
+        local out="declare -A ${arr_name}=("
         for key in "${!arr[@]}"; do
             val="${arr[$key]}"
-            echo -n "[\"$key\"]=\"${val//\"/\\\"}\" "
+            key="${key//\\/\\\\}"
+            key="${key//\"/\\\"}"
+            key="${key//\$/\\\$}"
+            key="${key//\`/\\\`}"
+            val="${val//\\/\\\\}"
+            val="${val//\"/\\\"}"
+            val="${val//\$/\\\$}"
+            val="${val//\`/\\\`}"
+            out+="[\"$key\"]=\"$val\" "
         done
-        echo ")"
+        out+=")"
+        REPLY="$out"
     }
-    
+
+    __serialize_assoc() {
+        __serialize_assoc_r "$1"
+        printf "%s\n" "$REPLY"
+    }
+
     __save() {
         local rcfile="${OMNIRC:-$HOME/.omnirc}"
         local tmp_content="" line
@@ -89,19 +102,20 @@ __helper__() {
         local wikis_str="" w
         for w in "${WIKIS[@]}"; do wikis_str+="\"$w\" "; done
         tmp_content+="declare -a WIKIS=($wikis_str)"$'\n'
-        tmp_content+="$(__serialize_assoc WIKI_VARS)"$'\n'
-        tmp_content+="$(__serialize_assoc WIKI_PAGES)"$'\n'
-        tmp_content+="$(__serialize_assoc WIKI_PAGE_VARS)"$'\n'
+        __serialize_assoc_r WIKI_VARS; tmp_content+="$REPLY"$'\n'
+        __serialize_assoc_r WIKI_PAGES; tmp_content+="$REPLY"$'\n'
+        __serialize_assoc_r WIKI_PAGE_VARS; tmp_content+="$REPLY"$'\n'
         local tmpls_str="" t
         for t in "${WIKI_TEMPLATES[@]}"; do tmpls_str+="\"$t\" "; done
         tmp_content+="declare -a WIKI_TEMPLATES=($tmpls_str)"$'\n'
-        tmp_content+="$(__serialize_assoc WIKI_TEMPLATE_VARS)"$'\n'
-        tmp_content+="$(__serialize_assoc WIKI_TOPICS)"$'\n'
-        tmp_content+="$(__serialize_assoc WIKI_REFS)"$'\n'
-        tmp_content+="$(__serialize_assoc WIKI_BLOCKS)"$'\n'
-        tmp_content+="$(__serialize_assoc WIKI_AUTHORS)"$'\n'
+        __serialize_assoc_r WIKI_TEMPLATE_VARS; tmp_content+="$REPLY"$'\n'
+        __serialize_assoc_r WIKI_TOPICS; tmp_content+="$REPLY"$'\n'
+        __serialize_assoc_r WIKI_REFS; tmp_content+="$REPLY"$'\n'
+        __serialize_assoc_r WIKI_BLOCKS; tmp_content+="$REPLY"$'\n'
+        __serialize_assoc_r WIKI_AUTHORS; tmp_content+="$REPLY"$'\n'
         printf "%s" "$tmp_content" > "$rcfile"
-    }   
+    }    
+
 
     __sort_page_hierarchy() {
         local -n _in_arr="$1"

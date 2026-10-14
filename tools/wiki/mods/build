@@ -527,7 +527,6 @@ __build__() {
         done
         pre_search_js+=" ];"
         local WIKI_SEARCH_JS="$pre_search_js"
-
         for p in "${_pages[@]}"; do
             local p_file="${PAGE_FILES[$p]:-}"
             [[ ! -f "$p_file" ]] && continue
@@ -546,7 +545,7 @@ __build__() {
                             if [[ -n "$b_ctx" && "$raw_id" != *.* ]]; then
                                 __slugify_r "${b_ctx}.${raw_id}"; ref_key="$REPLY"
                             fi
-                            local anchor_id="block-${in_b}-${ref_key//./-}"
+                            local anchor_id="block-${in_b}-${ref_key//[\/.]/-}"
                             WIKI_REFS["${in_b}::${ref_key}"]="${p}:${anchor_id}"
                             WIKI_REFS["${w_name}::${ENV:-}::${in_b}::${ref_key}"]="${p}:${anchor_id}"
                         fi
@@ -786,7 +785,7 @@ __build__() {
                 fi
             done
         fi
-    }   
+    }    
 
     __build_search_index() {
         {

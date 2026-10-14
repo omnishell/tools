@@ -73,7 +73,7 @@ __blocks__() {
             __slugify_r "${block_context}.${raw_id}"
             ref_key="$REPLY"
         fi
-        local anchor_id_slug="${ref_key//./-}"
+        local anchor_id_slug="${ref_key//[\/.]/-}"
         local anchor_id="block-${bname}-${anchor_id_slug}"
         local BLOCK_ID="$clean_id"
         local BLOCK_TITLE="${block_entry:-${first_content_val:-$raw_id}}"

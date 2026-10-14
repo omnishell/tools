@@ -434,7 +434,6 @@ __listings__() {
                 fi
                 (( exclude_match == 1 )) && continue
             fi
-
             local in_block="" block_id="" first_key="" first_val=""
             local b_context="" b_entity=""
             local item_count_table=0 item_count_diagram=0
@@ -500,7 +499,7 @@ __listings__() {
                                 __slugify_r "${b_context}.${raw_id}"
                                 ref_key="$REPLY"
                             fi
-                            local anchor_id_slug="${ref_key//./-}"
+                            local anchor_id_slug="${ref_key//[\/.]/-}"
                             local anchor_id="block-${in_block}-${anchor_id_slug}"
                             
                             [[ -z "$link_text" ]] && link_text="$anchor_id"
@@ -538,7 +537,6 @@ __listings__() {
                     list_html+="    </li>"$'\n'
                 fi
             fi
-            
         done
         
         if (( flat_list == 1 )); then
@@ -549,7 +547,7 @@ __listings__() {
         list_html+="</list>"
         REPLY="$list_html"
         return 0
-    }
+    }   
 
     __listing_blocks() {
         __listing_blocks_r "$@"

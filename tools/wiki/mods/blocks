@@ -680,7 +680,6 @@ __blocks__() {
                                 cx=$(( (sx + tx)/2 ))
                                 cy=$(( (sy + ty)/2 ))
                             fi
-
                             local dx_s=$(( cx - sx ))
                             local dy_s=$(( cy - sy ))
                             local n_s=$(( dx_s*dx_s + dy_s*dy_s ))
@@ -694,7 +693,6 @@ __blocks__() {
                                 L_s=$x_val
                             fi
                             (( L_s == 0 )) && L_s=1
-
                             local dx_t=$(( tx - cx ))
                             local dy_t=$(( ty - cy ))
                             local n_t=$(( dx_t*dx_t + dy_t*dy_t ))
@@ -708,7 +706,6 @@ __blocks__() {
                                 L_t=$x_val
                             fi
                             (( L_t == 0 )) && L_t=1
-
                             local dist_s=0 dist_t=0
                             local abs_dx_s=${dx_s#-}; local abs_dy_s=${dy_s#-}
                             if (( abs_dx_s != 0 || abs_dy_s != 0 )); then
@@ -720,7 +717,6 @@ __blocks__() {
                                     dist_s=$(( hh_s * L_s / abs_dy_s ))
                                 fi
                             fi
-
                             local abs_dx_t=${dx_t#-}; local abs_dy_t=${dy_t#-}
                             if (( abs_dx_t != 0 || abs_dy_t != 0 )); then
                                 if (( abs_dx_t * hh_t > abs_dy_t * hw_t )); then
@@ -731,7 +727,6 @@ __blocks__() {
                                     dist_t=$(( hh_t * L_t / abs_dy_t ))
                                 fi
                             fi
-
                             local padding_s=$(( L_s * (100 - size_int) / 200 ))
                             local padding_t=$(( L_t * (100 - size_int) / 200 ))
                             local gap_s=$(( dist_s + padding_s ))
@@ -741,13 +736,11 @@ __blocks__() {
                             local max_gap_t=$(( L_t - 2 ))
                             (( gap_s > max_gap_s )) && gap_s=$max_gap_s
                             (( gap_t > max_gap_t )) && gap_t=$max_gap_t
-
                             nsx=$(( sx + dx_s * gap_s / L_s ))
                             nsy=$(( sy + dy_s * gap_s / L_s ))
                             
                             ntx=$(( tx - dx_t * gap_t / L_t ))
                             nty=$(( ty - dy_t * gap_t / L_t ))
-
                             if [[ "$a_format" == "curly" ]]; then
                                 d_path="M $nsx $nsy Q $cx $cy $ntx $nty"
                                 d_path_text="M $ntx $nty Q $cx $cy $nsx $nsy"
@@ -767,7 +760,7 @@ __blocks__() {
                                 local gap=$(( L_orth * (100 - size_int) / 200 ))
                                 nsx=$(( esx + sign_dx * gap ))
                                 ntx=$(( etx - sign_dx * gap ))
-                                nsx=$sy nty=$ty
+                                nsy=$sy nty=$ty
                                 d_path="M $nsx $sy L $ntx $ty"
                                 d_path_text="M $ntx $ty L $nsx $sy"
                             elif (( sx == tx )); then
@@ -883,20 +876,12 @@ __blocks__() {
         local out_html="<div id=\"${diagram_id}\" class=\"diagram-container\" style=\"overflow-x: auto; padding: 1rem;\">"$'\n'
         out_html+="<svg width=\"${svg_w}\" height=\"${svg_h}\" viewBox=\"0 0 ${svg_w} ${svg_h}\" xmlns=\"http://www.w3.org/2000/svg\" style=\"max-width: none;\">"$'\n'
         out_html+="<style>
-            .diagram-node { fill: #ffffff; stroke: #333333; }
-            .diagram-text, .diagram-text * { fill: #333333; font-family: monospace !important; font-size: 14px; }
-            .diagram-path { stroke: #333333; }
-            .diagram-bg-stroke { stroke: #ffffff; }
-            .diagram-marker { fill: #333333; }
-            svg text, svg textPath, svg tspan { font-family: monospace !important; font-size: 14px !important; }
-            .diagram-node + text.diagram-text { font-family: monospace font-size: 14px !important; }
-            @media (prefers-color-scheme: dark) {
-                .diagram-node { fill: #1e1e1e; stroke: #aaaaaa; }
-                .diagram-text, .diagram-text * { fill: #dddddd; }
-                .diagram-path { stroke: #aaaaaa; }
-                .diagram-bg-stroke { stroke: #1e1e1e; }
-                .diagram-marker { fill: #aaaaaa; }
-            }
+            .diagram-node { fill: var(--bg-code, #ffffff); stroke: var(--gray4, #333333); }
+            .diagram-text, .diagram-text * { fill: var(--fg, #333333); font-family: var(--family-diagram, monospace) !important; font-size: 14px; }
+            .diagram-path { stroke: var(--gray4, #333333); }
+            .diagram-bg-stroke { stroke: var(--bg, #ffffff); }
+            .diagram-marker { fill: var(--gray4, #333333); }
+            svg text, svg textPath, svg tspan { font-family: var(--family-diagram, monospace) !important; font-size: 14px !important; }
         </style>"$'\n'
         out_html+="${defs_html}"$'\n'
         out_html+="${layer_arrows}"$'\n'
@@ -905,7 +890,7 @@ __blocks__() {
         out_html+="${out_svg_wrap}"
         LIST_HTML_MAP["diagram"]+="<li><a href=\"#${diagram_id}\">Diagram ${page_diagram_count}</a></li>"$'\n'
         content+="${out_html}"
-    }
+    }   
 
     __block_plain() {
         local bname="$1"

@@ -75,8 +75,6 @@ __parse__() {
                     masked_codes[$m_idx]="$cached_span"
                 else
                     local svg_output
-                    # SVGs are cropped to the ink, so the baseline moves per formula; a trailing
-                    # zero-size \rule is emitted as a <rect> sitting exactly on the baseline
                     svg_output=$("$_WIKI_DIR/bin/latex" --stdout --inline --dpr 0.4 <<< "${math_code}\\rule{0pt}{0pt}")
                     svg_output="${svg_output//rgba(0,0,0,1)/var(--fg)}"
 
@@ -87,7 +85,6 @@ __parse__() {
                     fi
                     local align="-10px"
                     local baseline_re='.*<rect x="[0-9.-]+" y="([0-9.-]+)" width="0"'
-                    # calc does the float math, avoiding a fork per formula; -1px is the svg bottom border
                     [[ "$svg_output" =~ $baseline_re ]] && align="${BASH_REMATCH[1]}pt - (${min_y}pt + ${height}pt) - 1px"
 
                     cached_span="<span class=\"latex-inline\" style=\"vertical-align: calc(${align});\">${svg_output}</span>"
@@ -236,7 +233,6 @@ __parse__() {
             done
         fi
     }
-
 
     __parse_tag() {
         if [[ "$line" == *"=="* ]]; then
@@ -803,6 +799,7 @@ __parse__() {
 
     __parse_listings() {
         if [[ "$line" != *"{{"* ]]; then return 0; fi
+        local matched=0
         while [[ "$line" =~ \{\{[[:space:]]*list\.pages([[:space:]]+([^}]+))?[[:space:]]*\}\} ]]; do
             local full_match="${BASH_REMATCH[0]}"
             local args="${BASH_REMATCH[2]:-}"
@@ -847,7 +844,55 @@ __parse__() {
             set_ignore_this_turn=1
         fi
     }
-    
+
+    __parse_countings() {
+        if [[ "$line" != *"{{count."* && "$line" != *"{{"*"count."* ]]; then return 0; fi
+        while [[ "$line" =~ \{\{[[:space:]]*count\.pages([[:space:]]+([^}{]+))?[[:space:]]*\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local args="${BASH_REMATCH[2]:-}"
+            local count_val="0"
+            if type __counting_pages_r >/dev/null 2>&1; then
+                __counting_pages_r "$args"; count_val="$REPLY"
+            elif type __counting_pages >/dev/null 2>&1; then
+                count_val="$(__counting_pages "$args")"
+            fi
+            local old_line="$line"
+            line="${line/"$full_match"/$count_val}"
+            [[ "$line" == "$old_line" ]] && break
+        done
+
+        while [[ "$line" =~ \{\{[[:space:]]*count\.block\.([a-zA-Z0-9_-]+)([[:space:]]+([^}{]+))?[[:space:]]*\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local b_type="${BASH_REMATCH[1]}"
+            local args="${BASH_REMATCH[3]:-}"
+            local count_val="0"
+            if type __counting_blocks_r >/dev/null 2>&1; then
+                __counting_blocks_r "$b_type" "$args"; count_val="$REPLY"
+            elif type __counting_blocks >/dev/null 2>&1; then
+                count_val="$(__counting_blocks "$b_type" "$args")"
+            fi
+            local old_line="$line"
+            line="${line/"$full_match"/$count_val}"
+            [[ "$line" == "$old_line" ]] && break
+        done
+
+        while [[ "$line" =~ \{\{[[:space:]]*count\.([a-zA-Z0-9_-]+)(:([^}{[:space:]]+))?[[:space:]]*\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local c_type="${BASH_REMATCH[1]}"
+            local c_path="${BASH_REMATCH[3]}"
+            [[ "$c_type" == "pages" || "$c_type" == "block" ]] && break
+            local count_val="0"
+            if type __counting_blocks_r >/dev/null 2>&1; then
+                __counting_blocks_r "$c_type" "$c_path"; count_val="$REPLY"
+            elif type __counting_blocks >/dev/null 2>&1; then
+                count_val="$(__counting_blocks "$c_type" "$c_path")"
+            fi
+            local old_line="$line"
+            line="${line/"$full_match"/$count_val}"
+            [[ "$line" == "$old_line" ]] && break
+        done
+    }
+
     __parse_main() {
         local section_count=0
         local -a section_stack=()
@@ -860,6 +905,7 @@ __parse__() {
             
             __parse_vars
             __parse_listings
+            __parse_countings
             __parse_headers
             __parse_section
             __parse_markers && continue

@@ -1,7 +1,6 @@
 #! /bin/bash
 
 __helper__() {
-
     declare -ga WIKIS WIKI_TEMPLATES 2>/dev/null || true
     declare -gA WIKI_VARS WIKI_PAGES WIKI_PAGE_VARS WIKI_TEMPLATE_VARS WIKI_TOPICS WIKI_REFS WIKI_BLOCKS WIKI_AUTHORS 2>/dev/null || true
     
@@ -13,16 +12,18 @@ __helper__() {
     __slugify_r() {
         local s="${1,,}"
         s="${s// /-}"
-        s="${s//$'\xC3\xA1'/a}"; s="${s//$'\xC3\xA0'/a}"; s="${s//$'\xC3\xA3'/a}"; s="${s//$'\xC3\xA2'/a}"; s="${s//$'\xC3\xA4'/a}"
-        s="${s//$'\xC3\xA9'/e}"; s="${s//$'\xC3\xA8'/e}"; s="${s//$'\xC3\xAA'/e}"; s="${s//$'\xC3\xAB'/e}"
-        s="${s//$'\xC3\xAD'/i}"; s="${s//$'\xC3\xAC'/i}"; s="${s//$'\xC3\xAE'/i}"; s="${s//$'\xC3\xAF'/i}"
-        s="${s//$'\xC3\xB3'/o}"; s="${s//$'\xC3\xB2'/o}"; s="${s//$'\xC3\xB5'/o}"; s="${s//$'\xC3\xB4'/o}"; s="${s//$'\xC3\xB6'/o}"
-        s="${s//$'\xC3\xBA'/u}"; s="${s//$'\xC3\xB9'/u}"; s="${s//$'\xC3\xBB'/u}"; s="${s//$'\xC3\xBC'/u}"
-        s="${s//$'\xC3\xA7'/c}"; s="${s//$'\xC3\xB1'/n}"
+        if [[ "$s" == *[![:ascii:]]* ]]; then
+            s="${s//$'\xC3\xA1'/a}"; s="${s//$'\xC3\xA0'/a}"; s="${s//$'\xC3\xA3'/a}"; s="${s//$'\xC3\xA2'/a}"; s="${s//$'\xC3\xA4'/a}"
+            s="${s//$'\xC3\xA9'/e}"; s="${s//$'\xC3\xA8'/e}"; s="${s//$'\xC3\xAA'/e}"; s="${s//$'\xC3\xAB'/e}"
+            s="${s//$'\xC3\xAD'/i}"; s="${s//$'\xC3\xAC'/i}"; s="${s//$'\xC3\xAE'/i}"; s="${s//$'\xC3\xAF'/i}"
+            s="${s//$'\xC3\xB3'/o}"; s="${s//$'\xC3\xB2'/o}"; s="${s//$'\xC3\xB5'/o}"; s="${s//$'\xC3\xB4'/o}"; s="${s//$'\xC3\xB6'/o}"
+            s="${s//$'\xC3\xBA'/u}"; s="${s//$'\xC3\xB9'/u}"; s="${s//$'\xC3\xBB'/u}"; s="${s//$'\xC3\xBC'/u}"
+            s="${s//$'\xC3\xA7'/c}"; s="${s//$'\xC3\xB1'/n}"
+        fi
         s="${s//[^a-z0-9_./-]/}"
-        [[ "$s" =~ ^-[neE]+$ ]] && s=""
+        [[ "$s" == -* && -z "${s//[-neE]/}" ]] && s=""
         REPLY="$s"
-    }   
+    }
 
     __char_len() {
         local s="${1//[$'\x80'-$'\xbf']/}"
@@ -42,22 +43,23 @@ __helper__() {
     __json_escape() {
         __json_escape_r "$1"
         printf "%s" "$REPLY"
-    }    
-        
+    }
+
     __serialize_assoc_r() {
         local arr_name="$1" key val
         local -n arr="$arr_name"
+        local bt=$'\x60'
         local out="declare -A ${arr_name}=("
         for key in "${!arr[@]}"; do
             val="${arr[$key]}"
             key="${key//\\/\\\\}"
             key="${key//\"/\\\"}"
             key="${key//\$/\\\$}"
-            key="${key//\`/\\\`}"
+            key="${key//$bt/\\$bt}"
             val="${val//\\/\\\\}"
             val="${val//\"/\\\"}"
             val="${val//\$/\\\$}"
-            val="${val//\`/\\\`}"
+            val="${val//$bt/\\$bt}"
             out+="[\"$key\"]=\"$val\" "
         done
         out+=")"
@@ -84,18 +86,11 @@ __helper__() {
         declare -p WIKI_AUTHORS >/dev/null 2>&1 || declare -g -A WIKI_AUTHORS=()
         if [[ -f "$rcfile" ]]; then
             while IFS= read -r line || [[ -n "$line" ]]; do
-                if [[ "$line" == "declare -a WIKIS="* || \
-                      "$line" == "declare -A WIKI_VARS="* || \
-                      "$line" == "declare -A WIKI_PAGES="* || \
-                      "$line" == "declare -A WIKI_PAGE_VARS="* || \
-                      "$line" == "declare -a WIKI_TEMPLATES="* || \
-                      "$line" == "declare -A WIKI_TEMPLATE_VARS="* || \
-                      "$line" == "declare -A WIKI_TOPICS="* || \
-                      "$line" == "declare -A WIKI_REFS="* || \
-                      "$line" == "declare -A WIKI_BLOCKS="* || \
-                      "$line" == "declare -A WIKI_AUTHORS="* ]]; then
-                    continue
-                fi
+                case "$line" in
+                    "declare -a WIKIS="*|"declare -A WIKI_VARS="*|"declare -A WIKI_PAGES="*|"declare -A WIKI_PAGE_VARS="*|"declare -a WIKI_TEMPLATES="*|"declare -A WIKI_TEMPLATE_VARS="*|"declare -A WIKI_TOPICS="*|"declare -A WIKI_REFS="*|"declare -A WIKI_BLOCKS="*|"declare -A WIKI_AUTHORS="*)
+                        continue
+                        ;;
+                esac
                 tmp_content+="$line"$'\n'
             done < "$rcfile"
         fi
@@ -114,8 +109,7 @@ __helper__() {
         __serialize_assoc_r WIKI_BLOCKS; tmp_content+="$REPLY"$'\n'
         __serialize_assoc_r WIKI_AUTHORS; tmp_content+="$REPLY"$'\n'
         printf "%s" "$tmp_content" > "$rcfile"
-    }    
-
+    }
 
     __sort_page_hierarchy() {
         local -n _in_arr="$1"
@@ -125,16 +119,13 @@ __helper__() {
         local leaf_weights_name="${5:-}"
         local root_slug="${6:-}"
         local dir_weights_name="${7:-}"
-
         _out_arr=()
         (( ${#_in_arr[@]} == 0 )) && return 0
-
         local leaf_type="0" dir_type="1"
         if [[ "$mode" == "dir_first" ]]; then
             leaf_type="1"
             dir_type="0"
-                fi
-
+        fi
         local -a raw_sorted=()
         local item
         for item in "${_in_arr[@]}"; do
@@ -142,7 +133,6 @@ __helper__() {
             IFS="$delim"
             local -a parts=($item)
             IFS="$old_ifs"
-
             local sort_key=""
             local cum_path=""
             local i
@@ -153,7 +143,6 @@ __helper__() {
                 else
                     cum_path="${cum_path}${delim}${part}"
                 fi
-
                 local w type
                 if (( i == ${#parts[@]} - 1 )); then
                     type="$leaf_type"
@@ -176,7 +165,6 @@ __helper__() {
                     else
                         dir_slug_key="$cum_path"
                     fi
-
                     w="${PAGE_WEIGHTS[$dir_slug_key]:-9999999}"
                     if [[ "$w" == "9999999" && -n "$dir_weights_name" ]]; then
                         local -n _dr_w="$dir_weights_name"
@@ -192,7 +180,6 @@ __helper__() {
             done
             raw_sorted+=("${sort_key}|${item}")
         done
-
         local line
         while IFS= read -r line; do
             [[ -n "$line" ]] && _out_arr+=("${line#*|}")
@@ -205,141 +192,183 @@ __helper__() {
         local body_lines_name="${3:-}"
         local block_types_name="${4:-}"
         local block_title_keys_name="${5:-}"
-
         [[ -f "$file" ]] || return 1
-
         local -n _vars="$vars_map_name"
         local -a all_lines=()
         mapfile -t all_lines < "$file"
-
         local in_fm=0 fm_checked=0 in_globals=0 in_block=""
-        local line trimmed
+        local line trimmed l_trim
         for line in "${all_lines[@]}"; do
             trimmed="${line%$'\r'}"
-
+            l_trim="${trimmed#"${trimmed%%[![:space:]]*}"}"
             if (( fm_checked == 0 )); then
-                if [[ "$trimmed" =~ ^---[[:space:]]*$ ]]; then
+                if [[ "$trimmed" == "---"* && -z "${trimmed#---}" ]]; then
                     in_fm=1
                     fm_checked=1
                     continue
                 fi
                 fm_checked=1
             fi
-
             if (( in_fm == 1 )); then
-                if [[ "$trimmed" =~ ^---[[:space:]]*$ ]]; then
+                if [[ "$trimmed" == "---"* && -z "${trimmed#---}" ]]; then
                     in_fm=0
                     continue
                 fi
-                if [[ "$trimmed" =~ ^[[:space:]]*([a-zA-Z0-9_.-]+):[[:space:]]*(.*)$ ]]; then
-                    local k="${BASH_REMATCH[1]}"
-                    local v="${BASH_REMATCH[2]}"
-                    v="${v#"${v%%[![:space:]]*}"}"
-                    v="${v%"${v##*[![:space:]]}"}"
-                    v="${v#\"}"; v="${v%\"}"
-                    v="${v#\'}"; v="${v%\'}"
-                    _vars["$k"]="$v"
-                    _vars["page.$k"]="$v"
-                    [[ "$k" == "weighted" ]] && { _vars["weight"]="$v"; _vars["page.weight"]="$v"; }
-                fi
-                continue
-            fi
-
-            if [[ "$trimmed" =~ ^[[:space:]]*\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
-                local bname="${BASH_REMATCH[1]}"
-                if [[ "$bname" == "globals" ]]; then
-                    in_globals=1
-                else
-                    in_block="$bname"
-                    if [[ -n "$block_types_name" ]]; then
-                        local -n _btypes="$block_types_name"
-                        _btypes["$bname"]=1
-                    fi
-                    if [[ "$bname" == "table" && -n "$block_title_keys_name" ]]; then
-                        local -n _bkeys="$block_title_keys_name"
-                        _bkeys["table"]="caption"
+                if [[ "$l_trim" == *:* ]]; then
+                    local k="${l_trim%%:*}"
+                    if [[ -n "$k" && -z "${k//[a-zA-Z0-9_.-]/}" ]]; then
+                        local v="${l_trim#*:}"
+                        v="${v#"${v%%[![:space:]]*}"}"
+                        v="${v%"${v##*[![:space:]]}"}"
+                        v="${v#\"}"; v="${v%\"}"
+                        v="${v#\'}"; v="${v%\'}"
+                        _vars["$k"]="$v"
+                        _vars["page.$k"]="$v"
+                        [[ "$k" == "weighted" ]] && { _vars["weight"]="$v"; _vars["page.weight"]="$v"; }
                     fi
                 fi
                 continue
-            elif [[ "$trimmed" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]]; then
-                in_globals=0
-                in_block=""
-                continue
             fi
-
+            if [[ "$l_trim" == "{{"*"block."* && "$l_trim" == *"}}"* ]]; then
+                local r_trim="${l_trim%"${l_trim##*[![:space:]]}"}"
+                if [[ "$r_trim" == "{{"*"}}" ]]; then
+                    local inner="${r_trim#\{\{}"
+                    inner="${inner%\}\}}"
+                    inner="${inner#"${inner%%[![:space:]]*}"}"
+                    inner="${inner%"${inner##*[![:space:]]}"}"
+                    if [[ "$inner" == "block.end" ]]; then
+                        in_globals=0
+                        in_block=""
+                        continue
+                    elif [[ "$inner" == "block."* ]]; then
+                        local bname="${inner#block.}"
+                        if [[ -n "$bname" && -z "${bname//[a-zA-Z0-9_-]/}" ]]; then
+                            if [[ "$bname" == "globals" ]]; then
+                                in_globals=1
+                            else
+                                in_block="$bname"
+                                if [[ -n "$block_types_name" ]]; then
+                                    local -n _btypes="$block_types_name"
+                                    _btypes["$bname"]=1
+                                fi
+                                if [[ "$bname" == "table" && -n "$block_title_keys_name" ]]; then
+                                    local -n _bkeys="$block_title_keys_name"
+                                    _bkeys["table"]="caption"
+                                fi
+                            fi
+                            continue
+                        fi
+                    fi
+                fi
+            fi
             if (( in_globals == 1 )); then
-                if [[ "$trimmed" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_.-]+):[[:space:]]*(.*)$ ]]; then
-                    local k="${BASH_REMATCH[1]}"
-                    local v="${BASH_REMATCH[2]}"
-                    v="${v#"${v%%[![:space:]]*}"}"
-                    v="${v%"${v##*[![:space:]]}"}"
-                    v="${v#\"}"; v="${v%\"}"
-                    v="${v#\'}"; v="${v%\'}"
-                    _vars["$k"]="$v"
-                    _vars["page.$k"]="$v"
-                    [[ "$k" == "weighted" ]] && { _vars["weight"]="$v"; _vars["page.weight"]="$v"; }
+                if [[ "$l_trim" == "::"* ]]; then
+                    local after_col="${l_trim#::}"
+                    after_col="${after_col#"${after_col%%[![:space:]]*}"}"
+                    if [[ "$after_col" == *:* ]]; then
+                        local k="${after_col%%:*}"
+                        if [[ -n "$k" && -z "${k//[a-zA-Z0-9_.-]/}" ]]; then
+                            local v="${after_col#*:}"
+                            v="${v#"${v%%[![:space:]]*}"}"
+                            v="${v%"${v##*[![:space:]]}"}"
+                            v="${v#\"}"; v="${v%\"}"
+                            v="${v#\'}"; v="${v%\'}"
+                            _vars["$k"]="$v"
+                            _vars["page.$k"]="$v"
+                            [[ "$k" == "weighted" ]] && { _vars["weight"]="$v"; _vars["page.weight"]="$v"; }
+                        fi
+                    fi
                 fi
                 continue
             fi
-
             if [[ -n "$in_block" && -n "$block_title_keys_name" ]]; then
-                if [[ "$trimmed" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_.-]+): ]]; then
-                    local k="${BASH_REMATCH[1]}"
-                    local -n _bkeys="$block_title_keys_name"
-                    if [[ -z "${_bkeys["$in_block"]:-}" && "$k" != "__id__" && "$k" != "__context__" && "$k" != "__entry__" ]]; then
-                        _bkeys["$in_block"]="$k"
+                if [[ "$l_trim" == "::"* ]]; then
+                    local after_col="${l_trim#::}"
+                    after_col="${after_col#"${after_col%%[![:space:]]*}"}"
+                    if [[ "$after_col" == *:* ]]; then
+                        local k="${after_col%%:*}"
+                        if [[ -n "$k" && -z "${k//[a-zA-Z0-9_.-]/}" ]]; then
+                            local -n _bkeys="$block_title_keys_name"
+                            if [[ -z "${_bkeys["$in_block"]:-}" && "$k" != "__id__" && "$k" != "__context__" && "$k" != "__entry__" ]]; then
+                                _bkeys["$in_block"]="$k"
+                            fi
+                        fi
                     fi
                 fi
             fi
-
             if [[ -n "$body_lines_name" ]]; then
                 local -n _body="$body_lines_name"
                 _body+=("$line")
             fi
         done
-
         if [[ -n "$block_types_name" ]]; then
             local -n _btypes="$block_types_name"
             _btypes["page"]=1
             local ft="${_vars["page.tags"]:-${_vars["tags"]:-}}"
             [[ -n "$ft" ]] && _btypes["tag"]=1
         fi
-
         return 0
     }
 
     __search_index() {
-        local plain_content
-        plain_content="$(sed 's/<[^>]*>//g' <<< "$content")"
+        local enc_content=""
+        if (( ${#content} > 4096 )); then
+            enc_content="$(LC_ALL=C awk '
+                BEGIN { ORS = "" }
+                {
+                    gsub(/<[^>]*>/, "")
+                    gsub(/\\/, "\\\\")
+                    gsub(/"/, "\\\"")
+                    gsub(/\r/, "")
+                    gsub(/\t/, "\\t")
+                    if (NR > 1) print "\\n"
+                    print $0
+                }
+            ' <<< "$content")"
+        else
+            local plain_content=""
+            set -f
+            local old_ifs="$IFS"
+            IFS='<'
+            local -a html_parts=($content)
+            IFS="$old_ifs"
+            set +f
+            local hp
+            for hp in "${html_parts[@]}"; do
+                if [[ "$hp" == *">"* ]]; then
+                    plain_content+="${hp#*>}"
+                else
+                    plain_content+="$hp"
+                fi
+            done
+            __json_escape_r "$plain_content"
+            enc_content="$REPLY"
+        fi
         __json_escape_r "/${pagename//./\/}.html"; local enc_url="$REPLY"
         __json_escape_r "$pagename"; local enc_pagename="$REPLY"
         __json_escape_r "$current_dir"; local enc_category="$REPLY"
-        __json_escape_r "$plain_content"; local enc_content="$REPLY"
-        
         local file_tags="${PAGE_VARS["page.tags"]:-${PAGE_TAGS["$pagename"]:-${PAGE_VARS["tags"]:-}}}"
         if [[ -z "$file_tags" && -f "$file" ]]; then
             local -A _si_vars=()
             __read_page_source "$file" _si_vars
             file_tags="${_si_vars["page.tags"]:-${_si_vars["tags"]:-}}"
         fi
-        
         __json_escape_r "$file_tags"; local enc_tags="$REPLY"
         SEARCH_INDEX_MAP["page"]+="{\"url\":\"$enc_url\",\"pagename\":\"$enc_pagename\",\"category\":\"$enc_category\",\"content\":\"$enc_content\",\"globals.tags\":\"$enc_tags\"},"$'\n'
-
         if [[ -n "$file_tags" ]]; then
+            set -f
             local old_ifs="$IFS"
-            IFS=","
+            IFS=", "
             local -a tag_arr=($file_tags)
             IFS="$old_ifs"
+            set +f
             local t
             for t in "${tag_arr[@]}"; do
-                t="${t#"${t%%[![:space:]]*}"}"
-                t="${t%"${t##*[![:space:]]}"}"
                 [[ -z "$t" ]] && continue
                 __json_escape_r "$t"; local enc_t="$REPLY"
                 SEARCH_INDEX_MAP["tag"]+="{\"url\":\"$enc_url\",\"tag\":\"$enc_t\",\"pagename\":\"$enc_pagename\"},"$'\n'
             done
         fi
-    }
+    }    
 
 }

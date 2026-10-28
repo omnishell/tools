@@ -7,21 +7,30 @@ __blocks__() {
         local -n buffer_ref="$2"
         local -a BLOCK_KEYS=()
         local -A BLOCK_VALS=()
-        local current_key="" current_val="" b_line
+        local current_key="" current_val="" b_line l_trim after_col k_part v_part
         for b_line in "${buffer_ref[@]}"; do
-            if [[ "$b_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
-                if [[ -n "$current_key" ]]; then
-                    BLOCK_VALS["$current_key"]="$current_val"
-                    BLOCK_KEYS+=("$current_key")
+            l_trim="${b_line#"${b_line%%[![:space:]]*}"}"
+            if [[ "$l_trim" == "::"* ]]; then
+                after_col="${l_trim#::}"
+                after_col="${after_col#"${after_col%%[![:space:]]*}"}"
+                if [[ "$after_col" == *:* ]]; then
+                    k_part="${after_col%%:*}"
+                    if [[ -n "$k_part" && -z "${k_part//[a-zA-Z0-9_-]/}" ]]; then
+                        if [[ -n "$current_key" ]]; then
+                            BLOCK_VALS["$current_key"]="$current_val"
+                            BLOCK_KEYS+=("$current_key")
+                        fi
+                        current_key="$k_part"
+                        v_part="${after_col#*:}"
+                        v_part="${v_part#"${v_part%%[![:space:]]*}"}"
+                        v_part="${v_part%"${v_part##*[![:space:]]}"}"
+                        current_val="$v_part"
+                        continue
+                    fi
                 fi
-                current_key="${BASH_REMATCH[1]}"
-                current_val="${BASH_REMATCH[2]}"
-                current_val="${current_val#"${current_val%%[![:space:]]*}"}"
-                current_val="${current_val%"${current_val##*[![:space:]]}"}"
-            else
-                if [[ -n "$current_key" ]]; then
-                    current_val+=$'\n'"$b_line"
-                fi
+            fi
+            if [[ -n "$current_key" ]]; then
+                current_val+=$'\n'"$b_line"
             fi
         done
         if [[ -n "$current_key" ]]; then
@@ -36,7 +45,9 @@ __blocks__() {
             BLOCK_DISPLAY_VALS["$k"]="${BLOCK_VALS[$k]}"
         done
         local SKIP_DEFAULT_REFS=0
-        if declare -F "__block_${bname}_hook" >/dev/null; then
+        if [[ "$bname" == "def" ]]; then
+            __block_def_hook
+        elif declare -F "__block_${bname}_hook" >/dev/null; then
             "__block_${bname}_hook"
         fi
         local block_entry="${BLOCK_VALS[__entry__]:-}"
@@ -77,8 +88,7 @@ __blocks__() {
         local anchor_id="block-${bname}-${anchor_id_slug}"
         local BLOCK_ID="$clean_id"
         local BLOCK_TITLE="${block_entry:-${first_content_val:-$raw_id}}"
-        if [[ $SKIP_DEFAULT_REFS -eq 0 && -n "$w_name" ]]; then
-            declare -p WIKI_REFS >/dev/null 2>&1 || declare -g -A WIKI_REFS=()
+        if (( SKIP_DEFAULT_REFS == 0 )) && [[ -n "$w_name" ]]; then
             WIKI_REFS["${bname}::${ref_key}"]="${pagename}:${anchor_id}"
             WIKI_REFS["${w_name}::${ENV:-}::${bname}::${ref_key}"]="${pagename}:${anchor_id}"
         fi
@@ -114,23 +124,26 @@ __blocks__() {
                 local prefix_name="refs"
                 [[ "$k" != "__refs__" ]] && prefix_name="$k"
                 local rel_out="<ul>"$'\n'
+                set -f
                 local OIFS="$IFS"; IFS=','
-                local r_items=($dv)
+                local -a r_items=($dv)
                 IFS="$OIFS"
-                local temp_line="$line"
+                set +f
+                local r_item r_topic r_ref slug_ref
                 for r_item in "${r_items[@]}"; do
                     r_item="${r_item#"${r_item%%[![:space:]]*}"}"; r_item="${r_item%"${r_item##*[![:space:]]}"}"
                     if [[ -n "$r_item" ]]; then
-                        local r_topic="${r_item%%.*}"
-                        local r_ref="${r_item#*.}"
+                        r_topic="${r_item%%.*}"
+                        r_ref="${r_item#*.}"
                         __slugify_r "$r_ref"
-                        local slug_ref="$REPLY"
-                        line="{{${r_topic}:${slug_ref}:${r_ref}}}"
-                        __parse_refs
-                        rel_out+="        <li>$line</li>"$'\n'
+                        slug_ref="$REPLY"
+                        if [[ "$r_topic" == "page" ]]; then
+                            rel_out+="        <li><a href=\"/${slug_ref//./\/}.html\">${r_ref}</a></li>"$'\n'
+                        else
+                            rel_out+="        <li>%%WIKI_REF:${r_topic}:${slug_ref}:${r_ref}%%</li>"$'\n'
+                        fi
                     fi
                 done
-                line="$temp_line"
                 rel_out+="    </ul>"
                 dv="$rel_out"
                 dk="$prefix_name"
@@ -219,41 +232,44 @@ __blocks__() {
         content+="${html}"
     }
     
-    __block_def() {
-        local bname="$1"
-        local buffer_name="$2"
-        
-        __block_def_hook() {
-            if [[ -n "${BLOCK_DISPLAY_KEYS[term]:-}" ]]; then
-                BLOCK_DISPLAY_KEYS["term"]="def"
-                BLOCK_DISPLAY_VALS["term"]="<u>${BLOCK_VALS[term]}</u>"
-            fi
-            
-            if [[ -n "${BLOCK_VALS[context]:-}" ]]; then
-                BLOCK_VALS["__context__"]="${BLOCK_VALS[context]}"
-                BLOCK_DISPLAY_KEYS["context"]="" 
-            fi
-            
-            if [[ -z "${BLOCK_VALS[related]:-}" && -z "${BLOCK_VALS[__refs__]:-}" ]]; then
-                local text_to_scan="${BLOCK_VALS[idea]:-} ${BLOCK_VALS[details]:-}"
+    __block_def_hook() {
+        if [[ -n "${BLOCK_DISPLAY_KEYS[term]:-}" ]]; then
+            BLOCK_DISPLAY_KEYS["term"]="def"
+            BLOCK_DISPLAY_VALS["term"]="<u>${BLOCK_VALS[term]}</u>"
+        fi
+        if [[ -n "${BLOCK_VALS[context]:-}" ]]; then
+            BLOCK_VALS["__context__"]="${BLOCK_VALS[context]}"
+            BLOCK_DISPLAY_KEYS["context"]=""
+        fi
+        if [[ -z "${BLOCK_VALS[related]:-}" && -z "${BLOCK_VALS[__refs__]:-}" ]]; then
+            local text_to_scan="${BLOCK_VALS[idea]:-}${BLOCK_VALS[details]:-}"
+            if [[ "$text_to_scan" == *"{{"*":"*"}}"* ]]; then
                 local extracted_refs=""
                 local -A seen_refs=()
-                local topic_re='\{\{[[:space:]]*([a-zA-Z0-9_-]+):([^:}]+)(:([^}]+))?[[:space:]]*\}\}'
-                
-                while [[ "$text_to_scan" =~ $topic_re ]]; do
-                    local t_topic="${BASH_REMATCH[1]}"
-                    local t_ref="${BASH_REMATCH[2]}"
-                    t_ref="${t_ref#"${t_ref%%[![:space:]]*}"}"
-                    t_ref="${t_ref%"${t_ref##*[![:space:]]}"}"
-                    local full_ref="${t_topic}.${t_ref}"
-                    
-                    if [[ -z "${seen_refs[$full_ref]:-}" && "$t_topic" != "page" ]]; then
-                        seen_refs["$full_ref"]=1
-                        extracted_refs+="${extracted_refs:+, }${full_ref}"
+                local rem="$text_to_scan" inner t_topic t_rest t_ref full_ref
+                while [[ "$rem" == *"{{"*"}}"* ]]; do
+                    rem="${rem#*\{\{}"
+                    inner="${rem%%\}\}*}"
+                    rem="${rem#*\}\}}"
+                    if [[ "$inner" == *:* ]]; then
+                        inner="${inner#"${inner%%[![:space:]]*}"}"
+                        inner="${inner%"${inner##*[![:space:]]}"}"
+                        t_topic="${inner%%:*}"
+                        if [[ -n "$t_topic" && -z "${t_topic//[a-zA-Z0-9_-]/}" && "$t_topic" != "page" ]]; then
+                            t_rest="${inner#*:}"
+                            t_ref="${t_rest%%:*}"
+                            t_ref="${t_ref#"${t_ref%%[![:space:]]*}"}"
+                            t_ref="${t_ref%"${t_ref##*[![:space:]]}"}"
+                            if [[ -n "$t_ref" ]]; then
+                                full_ref="${t_topic}.${t_ref}"
+                                if [[ -z "${seen_refs[$full_ref]:-}" ]]; then
+                                    seen_refs["$full_ref"]=1
+                                    extracted_refs+="${extracted_refs:+, }${full_ref}"
+                                fi
+                            fi
+                        fi
                     fi
-                    text_to_scan="${text_to_scan#*${BASH_REMATCH[0]}}"
                 done
-                
                 if [[ -n "$extracted_refs" ]]; then
                     BLOCK_VALS["related"]="$extracted_refs"
                     if [[ -z "${BLOCK_DISPLAY_KEYS[related]:-}" ]]; then
@@ -263,30 +279,33 @@ __blocks__() {
                     BLOCK_DISPLAY_VALS["related"]="$extracted_refs"
                 fi
             fi
-            
-            if [[ -n "${BLOCK_VALS[related]:-}" ]]; then
-                local new_rel=""
-                local OIFS="$IFS"; IFS=','
-                local r_items=(${BLOCK_VALS[related]})
-                IFS="$OIFS"
-                for r_item in "${r_items[@]}"; do
-                    r_item="${r_item#"${r_item%%[![:space:]]*}"}"; r_item="${r_item%"${r_item##*[![:space:]]}"}"
-                    if [[ -n "$r_item" ]]; then
-                        if [[ "$r_item" != *.*.* && "$r_item" != def.* ]]; then
-                            new_rel+="${new_rel:+, }def.${r_item}"
-                        else
-                            new_rel+="${new_rel:+, }${r_item}"
-                        fi
+        fi
+        if [[ -n "${BLOCK_VALS[related]:-}" ]]; then
+            local new_rel=""
+            set -f
+            local OIFS="$IFS"; IFS=','
+            local -a r_items=(${BLOCK_VALS[related]})
+            IFS="$OIFS"
+            set +f
+            local r_item
+            for r_item in "${r_items[@]}"; do
+                r_item="${r_item#"${r_item%%[![:space:]]*}"}"; r_item="${r_item%"${r_item##*[![:space:]]}"}"
+                if [[ -n "$r_item" ]]; then
+                    if [[ "$r_item" != *.*.* && "$r_item" != def.* ]]; then
+                        new_rel+="${new_rel:+, }def.${r_item}"
+                    else
+                        new_rel+="${new_rel:+, }${r_item}"
                     fi
-                done
-                BLOCK_DISPLAY_VALS["related"]="$new_rel"
-                BLOCK_DISPLAY_KEYS["related"]="__refs__"
-            fi
-        }
-        
-        __block_core "$bname" "$buffer_name"
-    }    
+                fi
+            done
+            BLOCK_DISPLAY_VALS["related"]="$new_rel"
+            BLOCK_DISPLAY_KEYS["related"]="__refs__"
+        fi
+    }
 
+    __block_def() {
+        __block_core "$1" "$2"
+    }    
 
     __block_table() {
         if [[ ${#table_buffer[@]} -lt 3 ]]; then return; fi

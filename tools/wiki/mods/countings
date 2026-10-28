@@ -188,7 +188,6 @@ __countings__() {
         shift
         local singular="${b_type%s}"
         local l_root="" l_depth="999" l_page="" l_exclude=""
-
         if [[ $# -eq 1 && "$1" != *=* ]]; then
             l_page="$1"
         else
@@ -204,9 +203,7 @@ __countings__() {
                 str="${str#*${BASH_REMATCH[0]}}"
             done
         fi
-
         local -a target_files=()
-
         if [[ -n "$l_page" ]]; then
             local t_file="$SOURCEDIR/${l_page//./\/}"
             if [[ -f "${t_file}.md" ]]; then target_files+=("${t_file}.md")
@@ -221,50 +218,59 @@ __countings__() {
                 t_dir="${t_dir}/${l_root//./\/}"
             fi
             if [[ -d "$t_dir" ]]; then
-                while IFS= read -r -d '' f; do
-                    local rel="${f#$t_dir/}"
-                    local d_count="${rel//[^\/]/}"
-                    if (( ${#d_count} < l_depth )); then
-                        target_files+=("$f")
+                local p p_f rel d_count
+                for p in "${_pages[@]}"; do
+                    p_f="${PAGE_FILES[$p]:-}"
+                    if [[ "$p_f" == "$t_dir/"* ]]; then
+                        rel="${p_f#$t_dir/}"
+                        d_count="${rel//[^\/]/}"
+                        if (( ${#d_count} < l_depth )); then
+                            target_files+=("$p_f")
+                        fi
                     fi
-                done < <(find "$t_dir" -type f \( -name "*.md" -o -name "*.wiki" \) -print0)
+                done
+                if (( ${#target_files[@]} == 0 )); then
+                    while IFS= read -r -d '' f; do
+                        rel="${f#$t_dir/}"
+                        d_count="${rel//[^\/]/}"
+                        if (( ${#d_count} < l_depth )); then
+                            target_files+=("$f")
+                        fi
+                    done < <(find "$t_dir" -type f -name "*.wiki" -print0)
+                fi
             fi
         else
             target_files+=("$file")
         fi
-
-        local total_blocks=0
+        local -a filtered_files=()
         local t_f
         for t_f in "${target_files[@]}"; do
             [[ -f "$t_f" ]] || continue
-            local t_rel="${t_f#$SOURCEDIR/}"
-            local fname="${t_f##*/}"
-            local fname_no_ext="${fname%.*}"
-            if [[ "$fname_no_ext" =~ ^([0-9]+)\.(.+)$ ]]; then
-                fname_no_ext="${BASH_REMATCH[2]}"
-            fi
-            local rel_dir="${t_rel%/*}"
-            [[ "$rel_dir" == "$t_rel" ]] && rel_dir=""
-
-            if [[ -n "$rel_dir" ]]; then
-                local clean_rel_dir=""
-                local old_ifs="$IFS"; IFS='/'; local -a r_parts=(); read -ra r_parts <<< "$rel_dir"; IFS="$old_ifs"
-                for r_part in "${r_parts[@]}"; do
-                    if [[ "$r_part" =~ ^([0-9]+)\.(.+)$ ]]; then
-                        r_part="${BASH_REMATCH[2]}"
-                    fi
-                    if [[ -z "$clean_rel_dir" ]]; then clean_rel_dir="$r_part"
-                    else clean_rel_dir="${clean_rel_dir}/${r_part}"; fi
-                done
-                rel_dir="$clean_rel_dir"
-            fi
-
-            local slug_key="${rel_dir//\//.}"
-            [[ -n "$slug_key" ]] && slug_key+="."
-            slug_key+="${fname_no_ext}"
-            slug_key="${slug_key#.}"
-
             if [[ -n "$l_exclude" ]]; then
+                local t_rel="${t_f#$SOURCEDIR/}"
+                local fname="${t_f##*/}"
+                local fname_no_ext="${fname%.*}"
+                if [[ "$fname_no_ext" =~ ^([0-9]+)\.(.+)$ ]]; then
+                    fname_no_ext="${BASH_REMATCH[2]}"
+                fi
+                local rel_dir="${t_rel%/*}"
+                [[ "$rel_dir" == "$t_rel" ]] && rel_dir=""
+                if [[ -n "$rel_dir" ]]; then
+                    local clean_rel_dir=""
+                    local old_ifs="$IFS"; IFS='/'; local -a r_parts=(); read -ra r_parts <<< "$rel_dir"; IFS="$old_ifs"
+                    for r_part in "${r_parts[@]}"; do
+                        if [[ "$r_part" =~ ^([0-9]+)\.(.+)$ ]]; then
+                            r_part="${BASH_REMATCH[2]}"
+                        fi
+                        if [[ -z "$clean_rel_dir" ]]; then clean_rel_dir="$r_part"
+                        else clean_rel_dir="${clean_rel_dir}/${r_part}"; fi
+                    done
+                    rel_dir="$clean_rel_dir"
+                fi
+                local slug_key="${rel_dir//\//.}"
+                [[ -n "$slug_key" ]] && slug_key+="."
+                slug_key+="${fname_no_ext}"
+                slug_key="${slug_key#.}"
                 local exclude_match=0
                 if [[ "$l_exclude" == *"&&"* ]]; then
                     exclude_match=1
@@ -282,7 +288,7 @@ __countings__() {
                         fi
                     done
                 else
-                    local old_ifs="$IFS"; IFS="|"; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
+                    local old_ifs="$IFS"; IFS=$'\x7c'; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
                     for p in "${parts[@]}"; do
                         p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"
                         [[ -z "$p" ]] && continue
@@ -294,30 +300,35 @@ __countings__() {
                 fi
                 (( exclude_match == 1 )) && continue
             fi
-
-            local in_block=""
-            while IFS= read -r t_line || [[ -n "$t_line" ]]; do
-                [[ "$t_line" == *"block."* ]] || continue
-                t_line="${t_line%$'\r'}"
-                if [[ -z "$in_block" ]]; then
-                    if [[ "$t_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
-                        local match_type="${BASH_REMATCH[1]}"
-                        if [[ "$match_type" == "$b_type" || "$match_type" == "$singular" || "${match_type}s" == "$b_type" ]]; then
-                            in_block="$match_type"
-                        fi
-                    fi
-                else
-                    if [[ "$t_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]]; then
-                        ((total_blocks++))
-                        in_block=""
-                    fi
-                fi
-            done < "$t_f"
+            filtered_files+=("$t_f")
         done
-
-        REPLY="$total_blocks"
+        local total_blocks=0
+        if (( ${#filtered_files[@]} > 0 )); then
+            total_blocks="$(LC_ALL=C awk -v b_type="$b_type" -v singular="$singular" '
+                BEGIN { c = 0 }
+                FNR == 1 { in_b = "" }
+                /block\./ {
+                    sub(/\r$/, "")
+                    if (in_b == "") {
+                        if ($0 ~ /^[ \t]*\{\{[ \t]*block\.[a-zA-Z0-9_-]+[ \t]*\}\}[ \t]*$/) {
+                            m = $0
+                            sub(/^[ \t]*\{\{[ \t]*block\./, "", m)
+                            sub(/[ \t]*\}\}[ \t]*$/, "", m)
+                            if (m == b_type) in_b = m
+                            else if (m == singular) in_b = m
+                            else if ((m "s") == b_type) in_b = m
+                        }
+                    } else if ($0 ~ /^[ \t]*\{\{[ \t]*block\.end[ \t]*\}\}[ \t]*$/) {
+                        c++
+                        in_b = ""
+                    }
+                }
+                END { print c }
+            ' "${filtered_files[@]}")"
+        fi
+        REPLY="${total_blocks:-0}"
         return 0
-    }   
+    }
 
     __counting_blocks() {
         __counting_blocks_r "$@"

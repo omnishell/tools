@@ -497,7 +497,11 @@ __build__() {
                 IFS="$OIFS"
             fi
             if [[ -f "$file" ]]; then
-                if (( force_rebuild == 1 )) || [[ -z "${CACHE_HASHES[$file]:-}" || "${DIRTY_PAGES[$p]:-1}" -eq 1 ]]; then
+                if (( force_rebuild == 1 )); then
+                    hash_files+=("$file")
+                elif [[ -z "${CACHE_HASHES[$file]:-}" ]]; then
+                    hash_files+=("$file")
+                elif [[ "${DIRTY_PAGES[$p]:-1}" -eq 1 ]]; then
                     hash_files+=("$file")
                 fi
             fi
@@ -527,41 +531,98 @@ __build__() {
         done
         pre_search_js+=" ];"
         local WIKI_SEARCH_JS="$pre_search_js"
+
+        local -a scan_files=()
+        local -A file_to_page=()
         for p in "${_pages[@]}"; do
             local p_file="${PAGE_FILES[$p]:-}"
-            [[ ! -f "$p_file" ]] && continue
-            local in_b="" b_id="" b_ctx="" b_entry="" first_v=""
-            while IFS= read -r l || [[ -n "$l" ]]; do
-                l="${l%$'\r'}"
-                if [[ -z "$in_b" ]]; then
-                    if [[ "$l" =~ ^[[:space:]]*\{\{[[:space:]]*block\.([a-zA-Z0-9_-]+)[[:space:]]*\}\}[[:space:]]*$ ]]; then
-                        in_b="${BASH_REMATCH[1]}"; b_id="" ; b_ctx="" ; b_entry="" ; first_v=""
-                    fi
-                else
-                    if [[ "$l" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]]; then
-                        local raw_id="${b_id:-${b_entry:-$first_v}}"
-                        if [[ -n "$raw_id" ]]; then
-                            __slugify_r "$raw_id"; local clean_id="$REPLY"; local ref_key="$clean_id"
-                            if [[ -n "$b_ctx" && "$raw_id" != *.* ]]; then
-                                __slugify_r "${b_ctx}.${raw_id}"; ref_key="$REPLY"
-                            fi
-                            local anchor_id="block-${in_b}-${ref_key//[\/.]/-}"
-                            WIKI_REFS["${in_b}::${ref_key}"]="${p}:${anchor_id}"
-                            WIKI_REFS["${w_name}::${ENV:-}::${in_b}::${ref_key}"]="${p}:${anchor_id}"
-                        fi
-                        in_b=""
-                    elif [[ "$l" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_.-]+):[[:space:]]*(.*)$ ]]; then
-                        local k="${BASH_REMATCH[1]}" v="${BASH_REMATCH[2]}"
-                        v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
-                        if [[ "$k" == "__id__" ]]; then b_id="$v"
-                        elif [[ "$k" == "__context__" || "$k" == "context" ]]; then b_ctx="$v"
-                        elif [[ "$k" == "__entry__" ]]; then b_entry="$v"
-                        elif [[ -z "$first_v" && "$k" != "__refs__" ]]; then first_v="$v"
-                        fi
-                    fi
-                fi
-            done < "$p_file"
+            if [[ -f "$p_file" ]]; then
+                scan_files+=("$p_file")
+                file_to_page["$p_file"]="$p"
+            fi
         done
+
+        local blocks_scan_file="$cache_dir/blocks_scan.tsv"
+        rm -f "$blocks_scan_file"
+
+        if (( ${#scan_files[@]} > 0 )); then
+            local ref_f ref_b ref_k ref_a p_slug
+            while IFS=$'\t' read -r ref_f ref_b ref_k ref_a; do
+                p_slug="${file_to_page[$ref_f]:-}"
+                [[ -z "$p_slug" ]] && continue
+                WIKI_REFS["${ref_b}::${ref_k}"]="${p_slug}:${ref_a}"
+                WIKI_REFS["${w_name}::${ENV:-}::${ref_b}::${ref_k}"]="${p_slug}:${ref_a}"
+            done < <(LC_ALL=C awk '
+                function slugify(s) {
+                    s = tolower(s)
+                    gsub(/ /, "-", s)
+                    gsub(/\xc3[\xa0-\xa4\x80-\x84]/, "a", s)
+                    gsub(/\xc3[\xa8-\xab\x88-\x8b]/, "e", s)
+                    gsub(/\xc3[\xac-\xaf\x8c-\x8f]/, "i", s)
+                    gsub(/\xc3[\xb2-\xb6\x92-\x96]/, "o", s)
+                    gsub(/\xc3[\xb9-\xbc\x99-\x9c]/, "u", s)
+                    gsub(/\xc3[\xa7\x87]/, "c", s)
+                    gsub(/\xc3[\xb1\x91]/, "n", s)
+                    gsub(/[^a-z0-9_./-]/, "", s)
+                    if (s ~ /^-[neE]+$/) s = ""
+                    return s
+                }
+                BEGIN {
+                    id_key = "__id" "__"
+                    ctx_key = "__context" "__"
+                    entry_key = "__entry" "__"
+                    refs_key = "__refs" "__"
+                }
+                FNR == 1 { in_b = "" }
+                {
+                    sub(/\r$/, "")
+                    if (in_b == "") {
+                        if ($0 ~ /^[ \t]*\{\{[ \t]*block\.[a-zA-Z0-9_-]+[ \t]*\}\}[ \t]*$/) {
+                            s = $0
+                            sub(/^[ \t]*\{\{[ \t]*block\./, "", s)
+                            sub(/[ \t]*\}\}[ \t]*$/, "", s)
+                            if (s != "end" && s != "globals" && s != "comment") {
+                                in_b = s; b_id = ""; b_ctx = ""; b_entry = ""; first_v = ""
+                            }
+                        }
+                    } else {
+                        if ($0 ~ /^[ \t]*\{\{[ \t]*block\.end[ \t]*\}\}[ \t]*$/) {
+                            raw_id = (b_id != "") ? b_id : ((b_entry != "") ? b_entry : first_v)
+                            if (raw_id != "") {
+                                ref_key = slugify(raw_id)
+                                if (b_ctx != "" && index(raw_id, ".") == 0) {
+                                    ref_key = slugify(b_ctx "." raw_id)
+                                }
+                                anchor_slug = ref_key
+                                gsub(/[\/.]/, "-", anchor_slug)
+                                print FILENAME "\t" in_b "\t" ref_key "\tblock-" in_b "-" anchor_slug
+                            }
+                            in_b = ""
+                        } else if ($0 ~ /^[ \t]*::[ \t]*[a-zA-Z0-9_.-]+:/) {
+                            s = $0
+                            sub(/^[ \t]*::[ \t]*/, "", s)
+                            idx = index(s, ":")
+                            k = substr(s, 1, idx - 1)
+                            v = substr(s, idx + 1)
+                            sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v)
+                            if (k == id_key) b_id = v
+                            else if (k == ctx_key) b_ctx = v
+                            else if (k == "context") b_ctx = v
+                            else if (k == entry_key) b_entry = v
+                            else if (first_v == "" && k != refs_key) first_v = v
+                        }
+                    }
+                }
+            ' "${scan_files[@]}")
+        fi
+
+        local refs_tsv_file="$cache_dir/refs.tsv"
+        {
+            local rk
+            for rk in "${!WIKI_REFS[@]}"; do
+                printf "%s\t%s\n" "$rk" "${WIKI_REFS[$rk]}"
+            done
+        } > "$refs_tsv_file"
         
         local -A LAYOUT_CACHE=()
         local -a render_targets=()
@@ -628,6 +689,63 @@ __build__() {
             fi
             render_targets+=("$p")
         done
+
+        if (( ${#render_targets[@]} > 0 )); then
+            local -a rt_files=()
+            for p in "${render_targets[@]}"; do
+                rt_files+=("${page_file_map[$p]}")
+            done
+            local m_expr
+            while IFS= read -r m_expr; do
+                [[ -z "$m_expr" ]] && continue
+                if [[ -z "${LATEX_MEM_CACHE["inline:${m_expr}"]:-}" ]]; then
+                    local svg_output
+                    svg_output=$("$_WIKI_DIR/bin/latex" --stdout --inline --dpr 0.4 <<< "${m_expr}\\rule{0pt}{0pt}")
+                    svg_output="${svg_output//rgba(0,0,0,1)/var(--fg)}"
+                    local min_y=0 height=0
+                    if [[ "$svg_output" =~ viewBox=[\"\']([0-9.-]+)[[:space:],]+([0-9.-]+)[[:space:],]+([0-9.-]+)[[:space:],]+([0-9.-]+)[\"\'] ]]; then
+                        min_y="${BASH_REMATCH[2]}"
+                        height="${BASH_REMATCH[4]}"
+                    fi
+                    local align="-10px"
+                    local baseline_re='.*<rect x="[0-9.-]+" y="([0-9.-]+)" width="0"'
+                    [[ "$svg_output" =~ $baseline_re ]] && align="${BASH_REMATCH[1]}pt - (${min_y}pt + ${height}pt) - 1px"
+                    LATEX_MEM_CACHE["inline:${m_expr}"]="<span class=\"latex-inline\" style=\"vertical-align: calc(${align});\">${svg_output}</span>"
+                fi
+            done < <(LC_ALL=C awk '
+                {
+                    s = $0
+                    bt = sprintf("%c", 96)
+                    while ((i1 = index(s, bt)) > 0) {
+                        r = substr(s, i1 + 1)
+                        i2 = index(r, bt)
+                        if (i2 == 0) break
+                        s = substr(s, 1, i1 - 1) substr(r, i2 + 1)
+                    }
+                    while ((i1 = index(s, "$")) > 0) {
+                        r = substr(s, i1 + 1)
+                        i2 = index(r, "$")
+                        if (i2 == 0) break
+                        m = substr(r, 1, i2 - 1)
+                        if (m != "" && !(m in seen)) {
+                            seen[m] = 1
+                            print m
+                        }
+                        s = substr(r, i2 + 1)
+                    }
+                }
+            ' "${rt_files[@]}")
+            if (( ${#LATEX_MEM_CACHE[@]} > 0 )); then
+                local lk lv
+                {
+                    for lk in "${!LATEX_MEM_CACHE[@]}"; do
+                        lv="${LATEX_MEM_CACHE[$lk]}"
+                        printf "%s\t%s\n" "$lk" "${lv//$'\n'/$'\x01'}"
+                    done
+                } > "$cache_dir/latex.cache"
+            fi
+        fi
+
         if (( ${#render_targets[@]} > 1 && max_jobs > 1 )); then
             local running_jobs=0
             for p in "${render_targets[@]}"; do
@@ -640,7 +758,8 @@ __build__() {
                 (
                     mkdir -p "${out_path%/*}"
                     local RAW_LAYOUT
-                    read -r -d '' RAW_LAYOUT < "$page_tmpl_raw" || true
+                    read -r -d '' RAW_LAYOUT < "$page_tmpl_raw"
+                    true
                     local -a layout_lines
                     mapfile -t layout_lines <<< "$RAW_LAYOUT"
                     declare -A SEARCH_INDEX_MAP=()
@@ -657,16 +776,17 @@ __build__() {
                     done
                     local -a idx_stale=()
                     for idx_f in "$cache_dir/$pagename"_index_*.json; do
-                        [[ -f "$idx_f" && -z "${idx_written[$idx_f]:-}" ]] || continue
-                        [[ "${idx_f#"$cache_dir/$pagename"_index_}" == *_index_* ]] && continue
-                        idx_stale+=("$idx_f")
+                        if [[ -f "$idx_f" && -z "${idx_written[$idx_f]:-}" ]]; then
+                            [[ "${idx_f#"$cache_dir/$pagename"_index_}" == *_index_* ]] && continue
+                            idx_stale+=("$idx_f")
+                        fi
                     done
                     (( ${#idx_stale[@]} )) && rm -f -- "${idx_stale[@]}"
                     printf "%s\t%s\n" "$file" "$file_hash" > "$cache_dir/${pagename}.done"
                 ) &
                 (( running_jobs++ ))
                 if (( running_jobs >= max_jobs )); then
-                    wait -n 2>/dev/null || wait
+                    wait -n 2>/dev/null
                     (( running_jobs-- ))
                 fi
             done
@@ -682,7 +802,8 @@ __build__() {
                 mkdir -p "${out_path%/*}"
                 local RAW_LAYOUT="${LAYOUT_CACHE["$page_tmpl_raw"]:-}"
                 if [[ -z "$RAW_LAYOUT" ]]; then
-                    read -r -d '' RAW_LAYOUT < "$page_tmpl_raw" || true
+                    read -r -d '' RAW_LAYOUT < "$page_tmpl_raw"
+                    true
                     LAYOUT_CACHE["$page_tmpl_raw"]="$RAW_LAYOUT"
                 fi
                 local -a layout_lines
@@ -702,9 +823,10 @@ __build__() {
                 done
                 local -a idx_stale=()
                 for idx_f in "$cache_dir/$pagename"_index_*.json; do
-                    [[ -f "$idx_f" && -z "${idx_written[$idx_f]:-}" ]] || continue
-                    [[ "${idx_f#"$cache_dir/$pagename"_index_}" == *_index_* ]] && continue
-                    idx_stale+=("$idx_f")
+                    if [[ -f "$idx_f" && -z "${idx_written[$idx_f]:-}" ]]; then
+                        [[ "${idx_f#"$cache_dir/$pagename"_index_}" == *_index_* ]] && continue
+                        idx_stale+=("$idx_f")
+                    fi
                 done
                 (( ${#idx_stale[@]} )) && rm -f -- "${idx_stale[@]}"
                 printf "%s\t%s\n" "$file" "$file_hash" > "$cache_dir/${pagename}.done"
@@ -718,7 +840,8 @@ __build__() {
             local done_marker="$cache_dir/${pagename}.done"
             if [[ -f "$done_marker" ]]; then
                 local df dh
-                IFS=$'\t' read -r df dh < "$done_marker" || true
+                IFS=$'\t' read -r df dh < "$done_marker"
+                true
                 [[ -n "$df" && -n "$dh" ]] && CACHE_HASHES["$df"]="$dh"
                 rm -f "$done_marker"
             fi
@@ -729,7 +852,8 @@ __build__() {
                 local bname="${idx_f##*_index_}"
                 bname="${bname%.json}"
                 local chunk=""
-                IFS= read -r -d '' chunk < "$idx_f" || true
+                IFS= read -r -d '' chunk < "$idx_f"
+                true
                 if [[ "$chunk" != "$title_key_header"* ]]; then replay_ok=0; break; fi
                 local header="${chunk%%$'\n'*}"
                 replay_names+=("$bname")
@@ -785,7 +909,7 @@ __build__() {
                 fi
             done
         fi
-    }    
+    }
 
     __build_search_index() {
         {
@@ -819,78 +943,94 @@ __build__() {
         printf "%s" "$json_content" > "$BUILDDIR/index.json"
     }
 
+    
     __build_defs_index() {
         local defs_data="${SEARCH_INDEX_MAP["def"]:-}"
-        local line
-        local -A defs_urls=()
-        local -A defs_deps_list=()
-        local -A seen_deps=()
-        
-        while IFS= read -r line || [[ -n "$line" ]]; do
-            line="${line%"${line##*[![:space:]]}"}"
-            [[ -z "$line" ]] && continue
-            local context="" term="" id="" related="" url=""
-            if [[ "$line" =~ \"url\":\"([^\"]*)\" ]]; then url="${BASH_REMATCH[1]}"; fi
-            if [[ "$line" =~ \"__context__\":\"([^\"]*)\" ]]; then context="${BASH_REMATCH[1]}"; fi
-            if [[ "$line" =~ \"term\":\"([^\"]*)\" ]]; then term="${BASH_REMATCH[1]}"; fi
-            if [[ "$line" =~ \"__id__\":\"([^\"]*)\" ]]; then id="${BASH_REMATCH[1]}"; fi
-            if [[ "$line" =~ \"related\":\"([^\"]*)\" ]]; then related="${BASH_REMATCH[1]}"; fi
-            
-            local raw_id="$id"
-            [[ -z "$raw_id" ]] && raw_id="$term"
-            [[ -z "$raw_id" ]] && continue
-            __slugify_r "$raw_id"
-            local ref_key="$REPLY"
-            if [[ -n "$context" && "$raw_id" != *.* ]]; then
-                __slugify_r "${context}.${raw_id}"
-                ref_key="$REPLY"
-            fi
-            
-            if [[ -z "${defs_urls[$ref_key]:-}" ]]; then
-                defs_urls["$ref_key"]="$url"
-            fi
-            
-            if [[ -n "$related" ]]; then
-                local old_ifs="$IFS"
-                IFS=","
-                local items=($related)
-                IFS="$old_ifs"
-                local r
-                for r in "${items[@]}"; do
-                    r="${r#"${r%%[![:space:]]*}"}"
-                    r="${r%"${r##*[![:space:]]}"}"
-                    r="${r#def.}"
-                    if [[ -n "$r" ]]; then
-                        __slugify_r "$r"
-                        r="$REPLY"
-                        if [[ -z "${seen_deps["$ref_key::$r"]:-}" ]]; then
-                            seen_deps["$ref_key::$r"]=1
-                            local cur="${defs_deps_list["$ref_key"]:-}"
-                            if [[ -n "$cur" ]]; then
-                                defs_deps_list["$ref_key"]="${cur},\"${r}\""
-                            else
-                                defs_deps_list["$ref_key"]="\"${r}\""
-                            fi
-                        fi
-                    fi
-                done
-            fi
-        done <<< "$defs_data"
-
-        local json_content="{"
-        local first=1
-        local k
-        for k in "${!defs_urls[@]}"; do
-            (( first == 0 )) && json_content+=","
-            local url="${defs_urls[$k]}"
-            local rel_json="${defs_deps_list[$k]:-}"
-            json_content+=$'\n'"  \"${k}\": { \"url\": \"${url}\", \"deps\": [ ${rel_json} ] }"
-            first=0
-        done
-        json_content+=$'\n'"}"
-        printf "%s\n" "$json_content" > "$BUILDDIR/defs.json"
+        if [[ -z "$defs_data" ]]; then
+            printf "{\n}\n" > "$BUILDDIR/defs.json"
+            __log "Generated defs index -> $BUILDDIR/defs.json" -t success -l wiki
+            return 0
+        fi
+        LC_ALL=C awk '
+            function slugify(s) {
+                s = tolower(s)
+                gsub(/ /, "-", s)
+                gsub(/\xc3[\xa0-\xa4\x80-\x84]/, "a", s)
+                gsub(/\xc3[\xa8-\xab\x88-\x8b]/, "e", s)
+                gsub(/\xc3[\xac-\xaf\x8c-\x8f]/, "i", s)
+                gsub(/\xc3[\xb2-\xb6\x92-\x96]/, "o", s)
+                gsub(/\xc3[\xb9-\xbc\x99-\x9c]/, "u", s)
+                gsub(/\xc3[\xa7\x87]/, "c", s)
+                gsub(/\xc3[\xb1\x91]/, "n", s)
+                gsub(/[^a-z0-9_./-]/, "", s)
+                if (s ~ /^-[neE]+$/) s = ""
+                return s
+            }
+            function extract_val(line, key,    pat, idx, tmp) {
+                pat = "\"" key "\":\""
+                idx = index(line, pat)
+                if (idx == 0) return ""
+                tmp = substr(line, idx + length(pat))
+                idx = index(tmp, "\"")
+                if (idx == 0) return ""
+                return substr(tmp, 1, idx - 1)
+            }
+            BEGIN {
+                ctx_key = "__context" "__"
+                id_key = "__id" "__"
+                k_count = 0
+            }
+            {
+                sub(/[ \t\r]+$/, "")
+                if ($0 == "") next
+                url = extract_val($0, "url")
+                context = extract_val($0, ctx_key)
+                term = extract_val($0, "term")
+                id = extract_val($0, id_key)
+                related = extract_val($0, "related")
+                raw_id = (id != "" ? id : term)
+                if (raw_id == "") next
+                ref_key = slugify(raw_id)
+                if (context != "" && index(raw_id, ".") == 0) {
+                    ref_key = slugify(context "." raw_id)
+                }
+                if (!(ref_key in defs_urls)) {
+                    defs_urls[ref_key] = url
+                    keys_order[++k_count] = ref_key
+                }
+                if (related != "") {
+                    n = split(related, items, ",")
+                    for (i = 1; i <= n; i++) {
+                        r = items[i]
+                        sub(/^[ \t]+/, "", r); sub(/[ \t]+$/, "", r)
+                        sub(/^def\./, "", r)
+                        if (r != "") {
+                            r = slugify(r)
+                            pair = ref_key "::" r
+                            if (!(pair in seen_deps)) {
+                                seen_deps[pair] = 1
+                                if (defs_deps[ref_key] != "") {
+                                    defs_deps[ref_key] = defs_deps[ref_key] ",\"" r "\""
+                                } else {
+                                    defs_deps[ref_key] = "\"" r "\""
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            END {
+                printf "{"
+                for (i = 1; i <= k_count; i++) {
+                    k = keys_order[i]
+                    if (i > 1) printf ","
+                    printf "\n  \"%s\": { \"url\": \"%s\", \"deps\": [ %s ] }", k, defs_urls[k], defs_deps[k]
+                }
+                printf "\n}\n"
+            }
+        ' <<< "$defs_data" > "$BUILDDIR/defs.json"
         __log "Generated defs index -> $BUILDDIR/defs.json" -t success -l wiki
-    }    
+    }
 
     __build_sitemap() {
         local domain=""

@@ -124,25 +124,21 @@ __parse__() {
     __parse_strong() {
         if [[ "$line" == *"**"* || "$line" == *"__"* ]]; then
             while [[ "$line" == *"**"*"**"* ]]; do
-                local old_line="$line"
-                line="${line/\*\*/<strong>}"; line="${line/\*\*/<\/strong>}"
-                if [[ "$line" == "$old_line" ]]; then break; fi
+                line="${line/\*\*/<strong>}"
+                line="${line/\*\*/<\/strong>}"
             done
             while [[ "$line" == *"__"*"__"* ]]; do
-                local old_line="$line"
-                line="${line/__/<strong>}"; line="${line/__/<\/strong>}"
-                if [[ "$line" == "$old_line" ]]; then break; fi
+                line="${line/__/<strong>}"
+                line="${line/__/<\/strong>}"
             done
         fi
-    }
+    }   
 
     __parse_underline() {
         if [[ "$line" == *"++"* ]]; then
             while [[ "$line" == *"++"*"++"* ]]; do
-                local old_line="$line"
                 line="${line/\+\+/<ins>}"
                 line="${line/\+\+/<\/ins>}"
-                if [[ "$line" == "$old_line" ]]; then break; fi
             done
         fi
     }
@@ -237,7 +233,7 @@ __parse__() {
             done
         fi
     }
-
+    
     __parse_tag() {
         if [[ "$line" == *"=="* ]]; then
             while [[ "$line" =~ (^|[^=])=([a-zA-Z0-9_-]+)=(.*) ]]; do
@@ -247,20 +243,17 @@ __parse__() {
                 if [[ "$remainder" != *"=="* ]]; then break; fi
                 local content="${remainder%%==*}"
                 local full="${pre}=${tag}=${content}=="
-                local old_line="$line"
                 line="${line/"$full"/${pre}<${tag}>${content}</${tag}>}"
-                if [[ "$line" == "$old_line" ]]; then break; fi
             done
             while [[ "$line" == *"=="*"=="* ]]; do
-                local old_line="$line"
-                line="${line/==/<tag>}"; line="${line/==/<\/tag>}"
-                if [[ "$line" == "$old_line" ]]; then break; fi
+                line="${line/==/<tag>}"
+                line="${line/==/<\/tag>}"
             done
         fi
     }
 
     __parse_markdown() {
-        if [[ "$line" != *'`'* && "$line" != *"*"* && "$line" != *"_"* && "$line" != *"+"* && "$line" != *"{"* && "$line" != *"["* && "$line" != *"<"* && "$line" != *"=="* && "$line" != *"$"* ]]; then return; fi
+        [[ "$line" != *[\`*_+{[\<=\$]* ]] && return 0
         local -a masked_codes=()
         local m_idx=0
         __parse_pre
@@ -271,6 +264,7 @@ __parse__() {
         __parse_em
         __parse_refs
         __parse_links
+        local i
         for (( i=0; i<m_idx; i++ )); do
             line="${line//%%MASKED_${i}%%/${masked_codes[$i]}}"
         done

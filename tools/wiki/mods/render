@@ -1,8 +1,10 @@
 #! /bin/bash
 
 __render__() {
+    
     __render_template() {
-    local PAGE_LAYOUT="" skip=0 ll
+    local -a layout_out=()
+    local skip=0 ll
     for ll in "${layout_lines[@]}"; do
         if [[ "$ll" == *"{%"* ]]; then
             if [[ "$ll" =~ \{%\ *if\ *\'([^\']+)\'\ *in\ *page\.name\ *and\ *not\ *page\.name\ *==\ *\"([^\"]+)\"\ *%\} ]]; then
@@ -52,9 +54,13 @@ __render__() {
                 ll="${ll//"$full_match"/$val}"
             done
         fi
-        PAGE_LAYOUT+="$ll"$'\n'
+        layout_out+=("$ll")
     done
-    
+    local old_ifs="$IFS"
+    IFS=$'\n'
+    local PAGE_LAYOUT="${layout_out[*]}"$'\n'
+    IFS="$old_ifs"
+
     local p_breadcrumb=1 p_featured=1 p_menu=1
     local p_str="${PAGE_VARS["page.partials"]:-}"
     if [[ -n "$p_str" ]]; then
@@ -72,81 +78,84 @@ __render__() {
             p_str="${p_str#*${BASH_REMATCH[0]}}"
         done
     fi
-    
+
     rendered="$PAGE_LAYOUT"
-    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?menu[[:space:]]+([^}]+)\}\} ]]; do
-        local full_match="${BASH_REMATCH[0]}"
-        local args="${BASH_REMATCH[2]}"
-        local custom_menu=""
-        if (( p_menu == 1 )); then
-            __partial_menu_r "$args"
-            custom_menu="$REPLY"
-        fi
-        rendered="${rendered/"$full_match"/$custom_menu}"
-    done
-    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?breadcrumb[[:space:]]*([^}]*)\}\} ]]; do
-        local full_match="${BASH_REMATCH[0]}"
-        local args="${BASH_REMATCH[2]}"
-        local custom_bc=""
-        if (( p_breadcrumb == 1 )); then
-            __partial_breadcrumb_r "$args"
-            custom_bc="$REPLY"
-        fi
-        rendered="${rendered/"$full_match"/$custom_bc}"
-    done
-    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?related([[:space:]]+([^}]+))?[[:space:]]*\}\} ]]; do
-        local full_match="${BASH_REMATCH[0]}"
-        local args="${BASH_REMATCH[3]:-}"
-        __partial_related_r "$args"
-        local custom_related="$REPLY"
-        rendered="${rendered/"$full_match"/$custom_related}"
-    done
-    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?head[[:space:]]+([^}]+)\}\} ]]; do
-        local full_match="${BASH_REMATCH[0]}"
-        local args="${BASH_REMATCH[2]}"
-        __partial_head_r "$args"
-        local custom_head="$REPLY"
-        rendered="${rendered/"$full_match"/$custom_head}"
-    done
-    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?author[[:space:]]+([^}]+)\}\} ]]; do
-        local full_match="${BASH_REMATCH[0]}"
-        local args="${BASH_REMATCH[2]}"
-        __partial_author "$args"
-        rendered="${rendered/"$full_match"/$WIKI_AUTHOR_HTML}"
-    done
-    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?search[[:space:]]+([^}]+)\}\} ]]; do
-        local full_match="${BASH_REMATCH[0]}"
-        local args="${BASH_REMATCH[2]}"
-        __partial_search "$args"
-        rendered="${rendered/"$full_match"/$WIKI_SEARCH_HTML}"
-    done
-    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?settings[[:space:]]+([^}]+)\}\} ]]; do
-        local full_match="${BASH_REMATCH[0]}"
-        local args="${BASH_REMATCH[2]}"
-        __partial_settings "$args"
-        rendered="${rendered/"$full_match"/$WIKI_SETTINGS_HTML}"
-    done
-    while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?help[[:space:]]+([^}]+)\}\} ]]; do
-        local full_match="${BASH_REMATCH[0]}"
-        local args="${BASH_REMATCH[2]}"
-        __partial_help "$args"
-        rendered="${rendered/"$full_match"/$WIKI_HELP_HTML}"
-    done
+    if [[ "$rendered" == *"{{"* ]]; then
+        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?menu[[:space:]]+([^}]+)\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local args="${BASH_REMATCH[2]}"
+            local custom_menu=""
+            if (( p_menu == 1 )); then
+                __partial_menu_r "$args"
+                custom_menu="$REPLY"
+            fi
+            rendered="${rendered/"$full_match"/$custom_menu}"
+        done
+        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?breadcrumb[[:space:]]*([^}]*)\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local args="${BASH_REMATCH[2]}"
+            local custom_bc=""
+            if (( p_breadcrumb == 1 )); then
+                __partial_breadcrumb_r "$args"
+                custom_bc="$REPLY"
+            fi
+            rendered="${rendered/"$full_match"/$custom_bc}"
+        done
+        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?related([[:space:]]+([^}]+))?[[:space:]]*\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local args="${BASH_REMATCH[3]:-}"
+            __partial_related_r "$args"
+            local custom_related="$REPLY"
+            rendered="${rendered/"$full_match"/$custom_related}"
+        done
+        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?head[[:space:]]+([^}]+)\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local args="${BASH_REMATCH[2]}"
+            __partial_head_r "$args"
+            local custom_head="$REPLY"
+            rendered="${rendered/"$full_match"/$custom_head}"
+        done
+        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?author[[:space:]]+([^}]+)\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local args="${BASH_REMATCH[2]}"
+            __partial_author "$args"
+            rendered="${rendered/"$full_match"/$WIKI_AUTHOR_HTML}"
+        done
+        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?search[[:space:]]+([^}]+)\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local args="${BASH_REMATCH[2]}"
+            __partial_search "$args"
+            rendered="${rendered/"$full_match"/$WIKI_SEARCH_HTML}"
+        done
+        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?settings[[:space:]]+([^}]+)\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local args="${BASH_REMATCH[2]}"
+            __partial_settings "$args"
+            rendered="${rendered/"$full_match"/$WIKI_SETTINGS_HTML}"
+        done
+        while [[ "$rendered" =~ \{\{[[:space:]]*(wiki\.)?help[[:space:]]+([^}]+)\}\} ]]; do
+            local full_match="${BASH_REMATCH[0]}"
+            local args="${BASH_REMATCH[2]}"
+            __partial_help "$args"
+            rendered="${rendered/"$full_match"/$WIKI_HELP_HTML}"
+        done
+    fi
+
+    local year="${_BUILD_YEAR:-}" now="${_BUILD_NOW:-}" t_val=""
+    [[ -z "$year" ]] && printf -v year "%(%Y)T" -1
+    [[ -z "$now" ]] && printf -v now "%(%Y/%m/%d at %H:%M)T" -1
+    local WIKI_SEARCH_HTML="" WIKI_THUMB_HTML="" WIKI_TAGS_HTML="" WIKI_AUTHOR_HTML="" WIKI_SETTINGS_HTML="" WIKI_HELP_HTML=""
+
+    [[ "$rendered" == *"{{ wiki.search }}"* ]] && __partial_search
+    [[ "$rendered" == *"{{ wiki.thumb }}"* ]] && __partial_thumb
+    [[ "$rendered" == *"{{ wiki.tags }}"* ]] && __partial_tags
+    [[ "$rendered" == *"{{ wiki.author }}"* ]] && __partial_author
+    [[ "$rendered" == *"{{ wiki.settings }}"* ]] && __partial_settings
+    [[ "$rendered" == *"{{ wiki.help }}"* ]] && __partial_help
 
     local search_tags=("{{ page.body }}" "{{ page.name }}" "{{ page.title }}" "{{ wiki.menu }}" "{{ wiki.featured }}" "{{ datetime.year }}" "{{ datetime.now }}" "{{ wiki.search }}" "{{ wiki.thumb }}" "{{ wiki.tags }}" "{{ wiki.author }}" "{{ wiki.settings }}" "{{ wiki.help }}")
-    local year now t_val=""
-    printf -v year "%(%Y)T" -1
-    printf -v now "%(%Y/%m/%d at %H:%M)T" -1
-    local WIKI_SEARCH_HTML="" WIKI_THUMB_HTML="" WIKI_TAGS_HTML="" WIKI_AUTHOR_HTML="" WIKI_SETTINGS_HTML="" WIKI_HELP_HTML=""
-    
-    __partial_search
-    __partial_thumb
-    __partial_tags
-    __partial_author
-    __partial_settings
-    __partial_help
-    
     for search in "${search_tags[@]}"; do
+        [[ "$rendered" != *"$search"* ]] && continue
         case "$search" in
             "{{ page.body }}") t_val="$content" ;;
             "{{ page.name }}") t_val="$title" ;;
@@ -166,7 +175,7 @@ __render__() {
         esac
         rendered="${rendered//"$search"/$t_val}"
     done
-    
+
     local auto_js="<script>%%WIKI_SEARCH_CONFIG%%; if (typeof hljs !== 'undefined') hljs.highlightAll();</script>"
     if [[ "$rendered" == *"</body>"* ]]; then
         rendered="${rendered/<\/body>/$auto_js$'\n'<\/body>}"
@@ -174,7 +183,6 @@ __render__() {
         rendered+="$auto_js"$'\n'
     fi
 }
-    
 
     __render_main() {
         local file="$1" pagename="$2" out_path="$3" current_dir="$4"
@@ -186,11 +194,9 @@ __render__() {
         local in_code_block=0 in_html_pre=0 in_custom_block="" custom_block_indent="" list_depth=0 was_empty=0 ignore_next_empty=0 set_ignore_this_turn=0 line
         local -a table_buffer=() diagram_buffer=() custom_block_buffer=() hide_buffer=() KEYS_STACK=() LIST_INDENTS=() LIST_TYPES=() lines=()
         local -A PAGE_VARS=()
-
         local raw_file=""
         IFS= read -r -d '' raw_file < "$file"
         true
-
         if [[ "$raw_file" == *"block.def"* ]]; then
             local tmp_js="$cache_dir/${pagename}_def_js.tmp"
             local tmp_li="$cache_dir/${pagename}_def_li.tmp"
@@ -198,7 +204,7 @@ __render__() {
             local ltx_cache="$cache_dir/latex.cache"
             local refs_tsv="$cache_dir/refs.tsv"
             local awk_out=""
-            awk_out="$(LC_ALL=C awk -v pagename="$pagename" -v w_name="$w_name" -v w_env="${ENV:-}" -v f_js="$tmp_js" -v f_li="$tmp_li" -v f_rf="$tmp_rf" -v f_ltx="$ltx_cache" -v f_refs="$refs_tsv" '
+            awk_out="$(LC_ALL=C awk -v pagename="$pagename" -v page_url_base="/${pagename//./\/}.html" -v w_name="$w_name" -v w_env="${ENV:-}" -v f_js="$tmp_js" -v f_li="$tmp_li" -v f_rf="$tmp_rf" -v f_ltx="$ltx_cache" -v f_refs="$refs_tsv" '
                 function slugify(s) {
                     s = tolower(s)
                     gsub(/ /, "-", s)
@@ -456,8 +462,7 @@ __render__() {
                     return out
                 }
                 BEGIN {
-                    in_def = 0; def_indent = ""; buf_len = 0; page_url_base = "/" pagename ".html"
-                    gsub(/\./, "/", page_url_base)
+                    in_def = 0; def_indent = ""; buf_len = 0
                     ctx_key = "__context" "__"
                     id_key = "__id" "__"
                     entry_key = "__entry" "__"
@@ -708,7 +713,6 @@ __render__() {
                     }
                 }
             ' <<< "$raw_file")"
-
             mapfile -t lines <<< "$awk_out"
             if [[ -f "$tmp_js" ]]; then
                 local js_chunk="" li_chunk=""
@@ -737,14 +741,14 @@ __render__() {
                 rm -f "$tmp_js" "$tmp_li" "$tmp_rf"
             fi
         else
-            mapfile -t lines <<< "$raw_file"
+            mapfile -t lines < "$file"
         fi
-        
+
         __parse_main
-        
+
         TOC_HTML+="</ul>"
         content="${content//\{\{TOC_PLACEHOLDER\}\}/$TOC_HTML}"
-        
+
         if [[ "$content" == *"%%WIKI_REF:"* ]]; then
             local tmp_c="${content//%%WIKI_REF:/$'\x02'}"
             set -f
@@ -810,10 +814,10 @@ __render__() {
         fi
         __search_index
         __render_template
-        
+
         [[ -n "${WIKI_SEARCH_JS:-}" ]] && rendered="${rendered//%%WIKI_SEARCH_CONFIG%%/$WIKI_SEARCH_JS}"
         printf "%s" "$rendered" > "$out_path"
         __log "Rendered -> $out_path" -t success -l wiki
     }
-
+ 
 }

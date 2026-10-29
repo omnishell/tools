@@ -27,24 +27,23 @@ __listings__() {
             str="${str#*${BASH_REMATCH[0]}}"
         done
         [[ "$l_root" == "." || -z "$l_root" ]] && l_root=""
-        
+
         local clean_l_root_slug=""
         local clean_l_root_url=""
         if [[ -n "$l_root" ]]; then
             local raw_root="${l_root#/}"
             local old_ifs="$IFS"; IFS='/'; local -a r_parts=(); read -ra r_parts <<< "$raw_root"; IFS="$old_ifs"
+            local p
             for p in "${r_parts[@]}"; do
                 if [[ "$p" =~ ^([0-9]+)\.(.+)$ ]]; then
                     p="${BASH_REMATCH[2]}"
                 fi
                 if [[ -z "$clean_l_root_slug" ]]; then clean_l_root_slug="${p//\//.}"; else clean_l_root_slug="${clean_l_root_slug}.${p//\//.}"; fi
-                
                 local u_part="${p//./\/}"
                 if [[ -z "$clean_l_root_url" ]]; then clean_l_root_url="$u_part"; else clean_l_root_url="${clean_l_root_url}/${u_part}"; fi
             done
             [[ "$l_root" == /* ]] && clean_l_root_url="/$clean_l_root_url"
         fi
-
         local list_html="<list class=\"list-pages\">"$'\n'"<ul class=\"list-pages-ul\">"$'\n'
         local target_dir="$SOURCEDIR"
         if [[ -n "$l_root" ]]; then
@@ -58,14 +57,33 @@ __listings__() {
             local f
             local force_globals=0
             [[ "$l_page_label" == globals.* ]] && force_globals=1
-            local s_globstar=0
-            shopt -q globstar && s_globstar=1 || shopt -s globstar
+            local -a candidate_files=()
+            if [[ ( "$l_pattern" == "*" || "$l_pattern" == "*.wiki" ) && ${#_pages[@]} -gt 0 ]]; then
+                local p pf
+                for p in "${_pages[@]}"; do
+                    pf="${PAGE_FILES[$p]:-}"
+                    if [[ "$pf" == "$target_dir/"* ]]; then
+                        candidate_files+=("$pf")
+                    fi
+                done
+            fi
+            if (( ${#candidate_files[@]} == 0 )); then
+                local s_globstar=0
+                shopt -q globstar && s_globstar=1 || shopt -s globstar
+                for f in "$target_dir"/**/$l_pattern; do
+                    [[ -f "$f" ]] && candidate_files+=("$f")
+                done
+                (( s_globstar == 0 )) && shopt -u globstar
+            fi
+
             local -a matching_slugs=()
             local -A file_disp_names=()
             local -A file_weights=()
             local -A dir_implicit_weights=()
-            for f in "$target_dir"/**/$l_pattern; do
-                [[ -f "$f" ]] || continue
+            local -A cand_slug_map=() cand_rel_map=() cand_fname_map=()
+            local -a globals_check_files=()
+
+            for f in "${candidate_files[@]}"; do
                 local rel_path="${f#$target_dir/}"
                 local slashes="${rel_path//[^\/]/}"
                 if (( l_depth > 0 && ${#slashes} >= l_depth )); then continue; fi
@@ -76,10 +94,11 @@ __listings__() {
                 fi
                 local rel_dir="${rel_path%/*}"
                 [[ "$rel_dir" == "$rel_path" ]] && rel_dir=""
-                
+
                 if [[ -n "$rel_dir" ]]; then
                     local clean_rel_dir=""
                     local old_ifs="$IFS"; IFS='/'; local -a r_parts=(); read -ra r_parts <<< "$rel_dir"; IFS="$old_ifs"
+                    local r_part
                     for r_part in "${r_parts[@]}"; do
                         local current_weight="9999999"
                         if [[ "$r_part" =~ ^([0-9]+)\.(.+)$ ]]; then
@@ -88,18 +107,18 @@ __listings__() {
                         fi
                         if [[ -z "$clean_rel_dir" ]]; then clean_rel_dir="$r_part"
                         else clean_rel_dir="${clean_rel_dir}/${r_part}"; fi
-                        
+
                         local temp_slug_key=""
                         if [[ -n "$clean_l_root_slug" ]]; then temp_slug_key="${clean_l_root_slug}.${clean_rel_dir//\//.}"; else temp_slug_key="${clean_rel_dir//\//.}"; fi
                         temp_slug_key="${temp_slug_key#.}"
-                        
+
                         if [[ "$current_weight" != "9999999" ]]; then
                             dir_implicit_weights["$temp_slug_key"]="$current_weight"
                         fi
                     done
                     rel_dir="$clean_rel_dir"
                 fi
-                
+
                 local slug_key=""
                 if [[ -n "$clean_l_root_slug" ]]; then
                     slug_key="${clean_l_root_slug}"
@@ -111,12 +130,13 @@ __listings__() {
                     slug_key+="${fname_no_ext}"
                 fi
                 slug_key="${slug_key#.}"
-                
+
                 if [[ -n "$l_exclude" ]]; then
                     local exclude_match=0
                     if [[ "$l_exclude" == *"&&"* ]]; then
                         exclude_match=1
                         local old_ifs="$IFS"; IFS="&"; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
+                        local p
                         for p in "${parts[@]}"; do
                             p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"
                             [[ -z "$p" ]] && continue
@@ -131,6 +151,7 @@ __listings__() {
                         done
                     else
                         local old_ifs="$IFS"; IFS="|"; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
+                        local p
                         for p in "${parts[@]}"; do
                             p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"
                             [[ -z "$p" ]] && continue
@@ -142,80 +163,101 @@ __listings__() {
                     fi
                     (( exclude_match == 1 )) && continue
                 fi
-                
+
+                local rel_slug="${rel_dir:+$rel_dir/}${fname_no_ext}"
+                cand_slug_map["$f"]="$slug_key"
+                cand_rel_map["$f"]="$rel_slug"
+                cand_fname_map["$f"]="$fname_no_ext"
+                globals_check_files+=("$f")
+            done
+
+            local -A all_file_globals=()
+            if (( ( ${#l_globals[@]} > 0 || force_globals == 1 ) && ${#globals_check_files[@]} > 0 )); then
+                local gf gk gv
+                while IFS=$'\x1F' read -r gf gk gv; do
+                    [[ -n "$gf" && -n "$gk" ]] && all_file_globals["${gf}::${gk}"]="$gv"
+                done < <(LC_ALL=C awk '
+                    FNR == 1 { in_g = 0 }
+                    {
+                        sub(/\r$/, "")
+                        if (!in_g) {
+                            if ($0 ~ /^[ \t]*\{\{[ \t]*block\.globals[ \t]*\}\}[ \t]*$/) in_g = 1
+                        } else {
+                            if ($0 ~ /^[ \t]*\{\{[ \t]*block\.end[ \t]*\}\}[ \t]*$/) { nextfile }
+                            if ($0 ~ /^[ \t]*::[ \t]*[a-zA-Z0-9_-]+:/) {
+                                s = $0; sub(/^[ \t]*::[ \t]*/, "", s)
+                                idx = index(s, ":")
+                                k = substr(s, 1, idx - 1)
+                                v = substr(s, idx + 1)
+                                sub(/^[ \t]+/, "", v)
+                                printf "%s\x1F%s\x1F%s\n", FILENAME, k, v
+                            }
+                        }
+                    }
+                ' "${globals_check_files[@]}")
+            fi
+
+            for f in "${globals_check_files[@]}"; do
                 local match=1
-                local -A file_globals=()
-                if [[ ${#l_globals[@]} -gt 0 || $force_globals -eq 1 ]]; then
-                    local in_globals=0 g_line
-                    while IFS= read -r g_line || [[ -n "$g_line" ]]; do
-                        g_line="${g_line%$'\r'}"
-                        if (( in_globals == 0 )); then
-                            [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.globals[[:space:]]*\}\}[[:space:]]*$ ]] && in_globals=1
+                if (( ${#l_globals[@]} > 0 )); then
+                    local gk actual_v req_str
+                    for gk in "${!l_globals[@]}"; do
+                        actual_v="${all_file_globals["${f}::${gk}"]:-}"
+                        if [[ -z "$actual_v" ]]; then match=0; break; fi
+                        req_str="${l_globals[$gk]}"
+
+                        if [[ "$req_str" == *"&&"* ]]; then
+                            local old_ifs="$IFS"; IFS="&"; local -a req_arr=(); read -ra req_arr <<< "$req_str"; IFS="$old_ifs"
+                            local req_v
+                            for req_v in "${req_arr[@]}"; do
+                                req_v="${req_v#"${req_v%%[![:space:]]*}"}"; req_v="${req_v%"${req_v##*[![:space:]]}"}"
+                                [[ -z "$req_v" ]] && continue
+                                case "$actual_v" in
+                                    $req_v) ;;
+                                    *) match=0; break ;;
+                                esac
+                            done
                         else
-                            [[ "$g_line" =~ ^[[:space:]]*\{\{[[:space:]]*block\.end[[:space:]]*\}\}[[:space:]]*$ ]] && break
-                            if [[ "$g_line" =~ ^[[:space:]]*::[[:space:]]*([a-zA-Z0-9_-]+):[[:space:]]*(.*)$ ]]; then
-                                file_globals["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
-                            fi
+                            local old_ifs="$IFS"; IFS="|"; local -a req_arr=(); read -ra req_arr <<< "$req_str"; IFS="$old_ifs"
+                            local or_match=0 req_v
+                            for req_v in "${req_arr[@]}"; do
+                                req_v="${req_v#"${req_v%%[![:space:]]*}"}"; req_v="${req_v%"${req_v##*[![:space:]]}"}"
+                                [[ -z "$req_v" ]] && continue
+                                case "$actual_v" in
+                                    $req_v) or_match=1; break ;;
+                                esac
+                            done
+                            if (( or_match == 0 )); then match=0; break; fi
                         fi
-                    done < "$f"
-                    if [[ ${#l_globals[@]} -gt 0 ]]; then
-                        local gk actual_v req_str
-                        for gk in "${!l_globals[@]}"; do
-                            actual_v="${file_globals[$gk]:-}"
-                            if [[ -z "$actual_v" ]]; then match=0; break; fi
-                            req_str="${l_globals[$gk]}"
-                            
-                            if [[ "$req_str" == *"&&"* ]]; then
-                                local old_ifs="$IFS"; IFS="&"; local -a req_arr=(); read -ra req_arr <<< "$req_str"; IFS="$old_ifs"
-                                for req_v in "${req_arr[@]}"; do
-                                    req_v="${req_v#"${req_v%%[![:space:]]*}"}"; req_v="${req_v%"${req_v##*[![:space:]]}"}"
-                                    [[ -z "$req_v" ]] && continue
-                                    case "$actual_v" in
-                                        $req_v) ;;
-                                        *) match=0; break ;;
-                                    esac
-                                done
-                            else
-                                local old_ifs="$IFS"; IFS="|"; local -a req_arr=(); read -ra req_arr <<< "$req_str"; IFS="$old_ifs"
-                                local or_match=0
-                                for req_v in "${req_arr[@]}"; do
-                                    req_v="${req_v#"${req_v%%[![:space:]]*}"}"; req_v="${req_v%"${req_v##*[![:space:]]}"}"
-                                    [[ -z "$req_v" ]] && continue
-                                    case "$actual_v" in
-                                        $req_v) or_match=1; break ;;
-                                    esac
-                                done
-                                if (( or_match == 0 )); then match=0; break; fi
-                            fi
-                            (( match == 0 )) && break
-                        done
-                    fi
+                        (( match == 0 )) && break
+                    done
                 fi
                 if (( match == 1 )); then
+                    local slug_key="${cand_slug_map[$f]}"
+                    local rel_slug="${cand_rel_map[$f]}"
+                    local fname_no_ext="${cand_fname_map[$f]}"
                     local disp_name=""
                     if [[ "$l_page_label" == globals.* ]]; then
                         local g_key="${l_page_label#globals.}"
-                        disp_name="${file_globals[$g_key]:-}"
+                        disp_name="${all_file_globals["${f}::${g_key}"]:-}"
                     elif [[ "$l_page_label" == "name" ]]; then
                         disp_name="${fname_no_ext}"
                     elif [[ "$l_page_label" == "weight" ]]; then
                         disp_name="${PAGE_WEIGHTS[$slug_key]:-9999999}"
                     fi
                     [[ -z "$disp_name" ]] && disp_name="${PAGE_TITLES[$slug_key]:-${fname_no_ext}}"
-                    local rel_slug=""
-                    if [[ -n "$rel_dir" ]]; then rel_slug="${rel_dir}/${fname_no_ext}"; else rel_slug="${fname_no_ext}"; fi
                     matching_slugs+=("$rel_slug")
                     file_disp_names["$rel_slug"]="$disp_name"
                     file_weights["$rel_slug"]="${PAGE_WEIGHTS[$slug_key]:-9999999}"
                 fi
             done
-            (( s_globstar == 0 )) && shopt -u globstar
-            if [[ ${#matching_slugs[@]} -gt 0 ]]; then
+
+            if (( ${#matching_slugs[@]} > 0 )); then
                 local -a raw_sorted=()
                 local rel_slug
                 for rel_slug in "${matching_slugs[@]}"; do
                     local old_ifs="$IFS"; IFS='/'; local -a parts=(); read -ra parts <<< "$rel_slug"; IFS="$old_ifs"
-                    
+
                     local sort_key=""
                     local cum_path=""
                     local i
@@ -248,26 +290,27 @@ __listings__() {
                 local -a current_path=()
                 for rel_slug in "${sorted_slugs[@]}"; do
                     local old_ifs="$IFS"; IFS='/'; local -a parts=(); read -ra parts <<< "$rel_slug"; IFS="$old_ifs"
-                    local page_name="${parts[${#parts[@]}-1]}"
                     local -a dir_parts=("${parts[@]:0:${#parts[@]}-1}")
                     local common_len=0
                     while [[ $common_len -lt ${#current_path[@]} && $common_len -lt ${#dir_parts[@]} && "${current_path[$common_len]}" == "${dir_parts[$common_len]}" ]]; do
-                        common_len=$((common_len + 1))
+                        (( common_len++ ))
                     done
                     local i
                     for (( i=${#current_path[@]}-1; i>=common_len; i-- )); do
                         list_html+="</ul></li>"$'\n'
                     done
                     local cum_dir=""
-                    for (( i=common_len; i<${#dir_parts[@]}; i++ )); do
+                    for (( i=0; i<${#dir_parts[@]}; i++ )); do
                         local dir="${dir_parts[$i]}"
                         if [[ -z "$cum_dir" ]]; then cum_dir="$dir"; else cum_dir="${cum_dir}/${dir}"; fi
-                        local dir_slug_key=""
-                        if [[ -n "$clean_l_root_slug" ]]; then dir_slug_key="${clean_l_root_slug}.${cum_dir//\//.}"; else dir_slug_key="${cum_dir//\//.}"; fi
-                        dir_slug_key="${dir_slug_key#.}"
-                        local dir_disp="${PAGE_TITLES[$dir_slug_key]:-$dir}"
-                        [[ "$dir_disp" != */ ]] && dir_disp="${dir_disp}/"
-                        list_html+="<li class=\"list-pages-dir\">${dir_disp}<ul class=\"list-pages-ul-inner\">"$'\n'
+                        if (( i >= common_len )); then
+                            local dir_slug_key=""
+                            if [[ -n "$clean_l_root_slug" ]]; then dir_slug_key="${clean_l_root_slug}.${cum_dir//\//.}"; else dir_slug_key="${cum_dir//\//.}"; fi
+                            dir_slug_key="${dir_slug_key#.}"
+                            local dir_disp="${PAGE_TITLES[$dir_slug_key]:-$dir}"
+                            [[ "$dir_disp" != */ ]] && dir_disp="${dir_disp}/"
+                            list_html+="<li class=\"list-pages-dir\">${dir_disp}<ul class=\"list-pages-ul-inner\">"$'\n'
+                        fi
                     done
                     local p_url=""
                     if [[ -n "$clean_l_root_url" ]]; then
@@ -291,7 +334,7 @@ __listings__() {
         REPLY="$list_html"
         return 0
     }
-
+    
     __listing_pages() {
         __listing_pages_r "$@"
         printf "%s" "$REPLY"
@@ -303,7 +346,7 @@ __listings__() {
         shift
         local singular="${b_type%s}"
         local l_root="" l_depth="999" l_page="" l_exclude="" l_context="false"
-        
+
         if [[ $# -eq 1 && "$1" != *=* ]]; then
             l_page="$1"
         else
@@ -320,19 +363,19 @@ __listings__() {
                 str="${str#*${BASH_REMATCH[0]}}"
             done
         fi
-        
+
         local flat_list=0
         [[ -z "$l_root" ]] && flat_list=1
-        
+
         local list_html="<list class=\"list-block-${singular}\">"$'\n'
         if (( flat_list == 1 )); then
             list_html+="<ul class=\"list-block-${singular}-ul\">"$'\n'
         else
             list_html+="<ol class=\"list-block-${singular}-files\">"$'\n'
         fi
-        
+
         local -a target_files=()
-        
+
         if [[ -n "$l_page" ]]; then
             local t_file="$SOURCEDIR/${l_page//./\/}"
             if [[ -f "${t_file}.md" ]]; then target_files+=("${t_file}.md")
@@ -371,20 +414,26 @@ __listings__() {
         else
             target_files+=("$file")
         fi
-        
-        local -a sorted_target_files=()
-        if (( ${#target_files[@]} > 0 )); then
-            local line
-            while IFS= read -r line; do
-                sorted_target_files+=("$line")
-            done < <(printf "%s\n" "${target_files[@]}" | LC_ALL=C sort)
+
+        local n_tf=${#target_files[@]}
+        if (( n_tf > 1 )); then
+            local i j tmp_f
+            for (( i=1; i<n_tf; i++ )); do
+                tmp_f="${target_files[i]}"
+                j=$(( i - 1 ))
+                while (( j >= 0 )) && [[ "${target_files[j]}" > "$tmp_f" ]]; do
+                    target_files[j+1]="${target_files[j]}"
+                    (( j-- ))
+                done
+                target_files[j+1]="$tmp_f"
+            done
         fi
 
         local -a filtered_files=()
         local -A file_t_url=()
         local -A file_disp_path=()
-        local t_f
-        for t_f in "${sorted_target_files[@]}"; do
+        local t_f old_ifs="$IFS"
+        for t_f in "${target_files[@]}"; do
             [[ -f "$t_f" ]] || continue
             local t_rel="${t_f#$SOURCEDIR/}"
             local fname="${t_f##*/}"
@@ -396,7 +445,12 @@ __listings__() {
             [[ "$rel_dir" == "$t_rel" ]] && rel_dir=""
             if [[ -n "$rel_dir" ]]; then
                 local clean_rel_dir=""
-                local old_ifs="$IFS"; IFS='/'; local -a r_parts=(); read -ra r_parts <<< "$rel_dir"; IFS="$old_ifs"
+                set -f
+                IFS='/'
+                local -a r_parts=($rel_dir)
+                IFS="$old_ifs"
+                set +f
+                local r_part
                 for r_part in "${r_parts[@]}"; do
                     if [[ "$r_part" =~ ^([0-9]+)\.(.+)$ ]]; then
                         r_part="${BASH_REMATCH[2]}"
@@ -420,7 +474,8 @@ __listings__() {
                 local exclude_match=0
                 if [[ "$l_exclude" == *"&&"* ]]; then
                     exclude_match=1
-                    local old_ifs="$IFS"; IFS="&"; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
+                    IFS="&"; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
+                    local p
                     for p in "${parts[@]}"; do
                         p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"
                         [[ -z "$p" ]] && continue
@@ -434,7 +489,8 @@ __listings__() {
                         fi
                     done
                 else
-                    local old_ifs="$IFS"; IFS=$'\x7c'; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
+                    IFS=$'\x7c'; local -a parts=(); read -ra parts <<< "$l_exclude"; IFS="$old_ifs"
+                    local p
                     for p in "${parts[@]}"; do
                         p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"
                         [[ -z "$p" ]] && continue
@@ -450,7 +506,6 @@ __listings__() {
             file_t_url["$t_f"]="$t_url"
             file_disp_path["$t_f"]="${rel_dir:+$rel_dir/}${fname_no_ext}"
         done
-
         if (( ${#filtered_files[@]} > 0 )); then
             local -A file_html_map=()
             local awk_f awk_li
@@ -563,7 +618,6 @@ __listings__() {
                     }
                 }
             ' "${filtered_files[@]}")
-
             for t_f in "${filtered_files[@]}"; do
                 local f_html="${file_html_map[$t_f]:-}"
                 if [[ -n "$f_html" ]]; then
@@ -580,7 +634,7 @@ __listings__() {
                 fi
             done
         fi
-        
+
         if (( flat_list == 1 )); then
             list_html+="</ul>"$'\n'
         else
@@ -590,8 +644,6 @@ __listings__() {
         REPLY="$list_html"
         return 0
     }    
-
-
 
     __listing_blocks() {
         __listing_blocks_r "$@"

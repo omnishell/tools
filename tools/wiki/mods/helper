@@ -46,25 +46,15 @@ __helper__() {
     }
 
     __serialize_assoc_r() {
-        local arr_name="$1" key val
-        local -n arr="$arr_name"
-        local bt=$'\x60'
-        local out="declare -A ${arr_name}=("
-        for key in "${!arr[@]}"; do
-            val="${arr[$key]}"
-            key="${key//\\/\\\\}"
-            key="${key//\"/\\\"}"
-            key="${key//\$/\\\$}"
-            key="${key//$bt/\\$bt}"
-            val="${val//\\/\\\\}"
-            val="${val//\"/\\\"}"
-            val="${val//\$/\\\$}"
-            val="${val//$bt/\\$bt}"
-            out+="[\"$key\"]=\"$val\" "
-        done
-        out+=")"
-        REPLY="$out"
-    }
+        local -n arr="$1"
+        if (( ${#arr[@]} == 0 )); then
+            REPLY="declare -A ${1}=()"
+            return 0
+        fi
+        local kv
+        kv="$(builtin declare -p "$1" 2>/dev/null)"
+        REPLY="declare -A ${1}=${kv#*=}"
+    }   
 
     __serialize_assoc() {
         __serialize_assoc_r "$1"
@@ -73,7 +63,7 @@ __helper__() {
 
     __save() {
         local rcfile="${OMNIRC:-$HOME/.omnirc}"
-        local tmp_content="" line
+        local -a out_lines=()
         declare -p WIKIS >/dev/null 2>&1 || declare -g -a WIKIS=()
         declare -p WIKI_VARS >/dev/null 2>&1 || declare -g -A WIKI_VARS=()
         declare -p WIKI_PAGES >/dev/null 2>&1 || declare -g -A WIKI_PAGES=()
@@ -84,33 +74,43 @@ __helper__() {
         declare -p WIKI_REFS >/dev/null 2>&1 || declare -g -A WIKI_REFS=()
         declare -p WIKI_BLOCKS >/dev/null 2>&1 || declare -g -A WIKI_BLOCKS=()
         declare -p WIKI_AUTHORS >/dev/null 2>&1 || declare -g -A WIKI_AUTHORS=()
+
         if [[ -f "$rcfile" ]]; then
-            while IFS= read -r line || [[ -n "$line" ]]; do
+            local -a rc_lines=()
+            mapfile -t rc_lines < "$rcfile"
+            local line
+            for line in "${rc_lines[@]}"; do
                 case "$line" in
                     "declare -a WIKIS="*|"declare -A WIKI_VARS="*|"declare -A WIKI_PAGES="*|"declare -A WIKI_PAGE_VARS="*|"declare -a WIKI_TEMPLATES="*|"declare -A WIKI_TEMPLATE_VARS="*|"declare -A WIKI_TOPICS="*|"declare -A WIKI_REFS="*|"declare -A WIKI_BLOCKS="*|"declare -A WIKI_AUTHORS="*)
                         continue
                         ;;
                 esac
-                tmp_content+="$line"$'\n'
-            done < "$rcfile"
+                out_lines+=("$line")
+            done
         fi
+
         local wikis_str="" w
         for w in "${WIKIS[@]}"; do wikis_str+="\"$w\" "; done
-        tmp_content+="declare -a WIKIS=($wikis_str)"$'\n'
-        __serialize_assoc_r WIKI_VARS; tmp_content+="$REPLY"$'\n'
-        __serialize_assoc_r WIKI_PAGES; tmp_content+="$REPLY"$'\n'
-        __serialize_assoc_r WIKI_PAGE_VARS; tmp_content+="$REPLY"$'\n'
+        out_lines+=("declare -a WIKIS=($wikis_str)")
+        __serialize_assoc_r WIKI_VARS; out_lines+=("$REPLY")
+        __serialize_assoc_r WIKI_PAGES; out_lines+=("$REPLY")
+        __serialize_assoc_r WIKI_PAGE_VARS; out_lines+=("$REPLY")
         local tmpls_str="" t
         for t in "${WIKI_TEMPLATES[@]}"; do tmpls_str+="\"$t\" "; done
-        tmp_content+="declare -a WIKI_TEMPLATES=($tmpls_str)"$'\n'
-        __serialize_assoc_r WIKI_TEMPLATE_VARS; tmp_content+="$REPLY"$'\n'
-        __serialize_assoc_r WIKI_TOPICS; tmp_content+="$REPLY"$'\n'
-        __serialize_assoc_r WIKI_REFS; tmp_content+="$REPLY"$'\n'
-        __serialize_assoc_r WIKI_BLOCKS; tmp_content+="$REPLY"$'\n'
-        __serialize_assoc_r WIKI_AUTHORS; tmp_content+="$REPLY"$'\n'
-        printf "%s" "$tmp_content" > "$rcfile"
+        out_lines+=("declare -a WIKI_TEMPLATES=($tmpls_str)")
+        __serialize_assoc_r WIKI_TEMPLATE_VARS; out_lines+=("$REPLY")
+        __serialize_assoc_r WIKI_TOPICS; out_lines+=("$REPLY")
+        __serialize_assoc_r WIKI_REFS; out_lines+=("$REPLY")
+        __serialize_assoc_r WIKI_BLOCKS; out_lines+=("$REPLY")
+        __serialize_assoc_r WIKI_AUTHORS; out_lines+=("$REPLY")
+
+        local old_ifs="$IFS"
+        IFS=$'\n'
+        printf "%s\n" "${out_lines[*]}" > "$rcfile"
+        IFS="$old_ifs"
     }
 
+   
     __sort_page_hierarchy() {
         local -n _in_arr="$1"
         local -n _out_arr="$2"
@@ -120,22 +120,20 @@ __helper__() {
         local root_slug="${6:-}"
         local dir_weights_name="${7:-}"
         _out_arr=()
-        (( ${#_in_arr[@]} == 0 )) && return 0
+        local n=${#_in_arr[@]}
+        (( n == 0 )) && return 0
         local leaf_type="0" dir_type="1"
         if [[ "$mode" == "dir_first" ]]; then
             leaf_type="1"
             dir_type="0"
         fi
-        local -a raw_sorted=()
-        local item
+        local -a keys=() items=()
+        local item old_ifs="$IFS"
         for item in "${_in_arr[@]}"; do
-            local old_ifs="$IFS"
             IFS="$delim"
             local -a parts=($item)
             IFS="$old_ifs"
-            local sort_key=""
-            local cum_path=""
-            local i
+            local sort_key="" cum_path="" i
             for (( i=0; i<${#parts[@]}; i++ )); do
                 local part="${parts[$i]}"
                 if [[ -z "$cum_path" ]]; then
@@ -178,12 +176,54 @@ __helper__() {
                 w="${w: -7}"
                 sort_key+="/${type}_${w}_${part}"
             done
-            raw_sorted+=("${sort_key}|${item}")
+            keys+=("$sort_key")
+            items+=("$item")
         done
-        local line
-        while IFS= read -r line; do
-            [[ -n "$line" ]] && _out_arr+=("${line#*|}")
-        done < <(printf "%s\n" "${raw_sorted[@]}" | LC_ALL=C sort -t'|' -k1,1)
+
+        if (( n > 1 )); then
+            local -a stack_l=(0) stack_r=($((n - 1)))
+            local sp=0 low high i j pivot_k tmp_k tmp_v
+            while (( sp >= 0 )); do
+                low=${stack_l[sp]}
+                high=${stack_r[sp]}
+                (( sp-- ))
+                if (( high - low <= 12 )); then
+                    for (( i = low + 1; i <= high; i++ )); do
+                        tmp_k="${keys[i]}"
+                        tmp_v="${items[i]}"
+                        j=$(( i - 1 ))
+                        while (( j >= low )) && [[ "${keys[j]}" > "$tmp_k" ]]; do
+                            keys[j+1]="${keys[j]}"
+                            items[j+1]="${items[j]}"
+                            (( j-- ))
+                        done
+                        keys[j+1]="$tmp_k"
+                        items[j+1]="$tmp_v"
+                    done
+                else
+                    pivot_k="${keys[(low + high) / 2]}"
+                    i=$low
+                    j=$high
+                    while (( i <= j )); do
+                        while [[ "${keys[i]}" < "$pivot_k" ]]; do (( i++ )); done
+                        while [[ "${keys[j]}" > "$pivot_k" ]]; do (( j-- )); done
+                        if (( i <= j )); then
+                            tmp_k="${keys[i]}"; keys[i]="${keys[j]}"; keys[j]="$tmp_k"
+                            tmp_v="${items[i]}"; items[i]="${items[j]}"; items[j]="$tmp_v"
+                            (( i++ ))
+                            (( j-- ))
+                        fi
+                    done
+                    if (( low < j )); then
+                        (( sp++ )); stack_l[sp]=$low; stack_r[sp]=$j
+                    fi
+                    if (( i < high )); then
+                        (( sp++ )); stack_l[sp]=$i; stack_r[sp]=$high
+                    fi
+                fi
+            done
+        fi
+        _out_arr=("${items[@]}")
     }
 
     __read_page_source() {
@@ -311,64 +351,41 @@ __helper__() {
     }
 
     __search_index() {
-        local enc_content=""
-        if (( ${#content} > 4096 )); then
-            enc_content="$(LC_ALL=C awk '
-                BEGIN { ORS = "" }
-                {
-                    gsub(/<[^>]*>/, "")
-                    gsub(/\\/, "\\\\")
-                    gsub(/"/, "\\\"")
-                    gsub(/\r/, "")
-                    gsub(/\t/, "\\t")
-                    if (NR > 1) print "\\n"
-                    print $0
-                }
-            ' <<< "$content")"
+        local plain_content=""
+        set -f
+        local old_ifs="$IFS"
+        IFS='<'
+        local -a html_parts=($content)
+        IFS=""
+        if (( ${#html_parts[@]} > 1 )); then
+            local head="${html_parts[0]}"
+            local -a rest=("${html_parts[@]:1}")
+            plain_content="${head}${rest[*]#*>}"
         else
-            local plain_content=""
-            set -f
-            local old_ifs="$IFS"
-            IFS='<'
-            local -a html_parts=($content)
-            IFS="$old_ifs"
-            set +f
-            local hp
-            for hp in "${html_parts[@]}"; do
-                if [[ "$hp" == *">"* ]]; then
-                    plain_content+="${hp#*>}"
-                else
-                    plain_content+="$hp"
-                fi
-            done
-            __json_escape_r "$plain_content"
-            enc_content="$REPLY"
+            plain_content="$content"
         fi
+        IFS="$old_ifs"
+        set +f
+        __json_escape_r "$plain_content"
+        local enc_content="$REPLY"
         __json_escape_r "/${pagename//./\/}.html"; local enc_url="$REPLY"
         __json_escape_r "$pagename"; local enc_pagename="$REPLY"
         __json_escape_r "$current_dir"; local enc_category="$REPLY"
         local file_tags="${PAGE_VARS["page.tags"]:-${PAGE_TAGS["$pagename"]:-${PAGE_VARS["tags"]:-}}}"
-        if [[ -z "$file_tags" && -f "$file" ]]; then
-            local -A _si_vars=()
-            __read_page_source "$file" _si_vars
-            file_tags="${_si_vars["page.tags"]:-${_si_vars["tags"]:-}}"
-        fi
         __json_escape_r "$file_tags"; local enc_tags="$REPLY"
         SEARCH_INDEX_MAP["page"]+="{\"url\":\"$enc_url\",\"pagename\":\"$enc_pagename\",\"category\":\"$enc_category\",\"content\":\"$enc_content\",\"globals.tags\":\"$enc_tags\"},"$'\n'
         if [[ -n "$file_tags" ]]; then
             set -f
-            local old_ifs="$IFS"
             IFS=", "
             local -a tag_arr=($file_tags)
             IFS="$old_ifs"
             set +f
-            local t
+            local t enc_t
             for t in "${tag_arr[@]}"; do
                 [[ -z "$t" ]] && continue
-                __json_escape_r "$t"; local enc_t="$REPLY"
+                __json_escape_r "$t"; enc_t="$REPLY"
                 SEARCH_INDEX_MAP["tag"]+="{\"url\":\"$enc_url\",\"tag\":\"$enc_t\",\"pagename\":\"$enc_pagename\"},"$'\n'
             done
         fi
     }    
-
 }

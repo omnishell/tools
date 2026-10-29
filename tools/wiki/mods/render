@@ -309,9 +309,9 @@ __render__() {
                         if (idx2 == 0) break
                         inner = substr(rest, 1, idx2 - 1)
                         suf = substr(rest, idx2 + 1)
-                        gsub(/&/, "&amp;", inner)
-                        gsub(/</, "&lt;", inner)
-                        gsub(/>/, "&gt;", inner)
+                        gsub(/&/, "\\&amp;", inner)
+                        gsub(/</, "\\&lt;", inner)
+                        gsub(/>/, "\\&gt;", inner)
                         m_codes[m_i] = "<inline>" inner "</inline>"
                         l = pre "%%MASK" m_i "%%" suf
                         m_i++
@@ -818,6 +818,6 @@ __render__() {
         [[ -n "${WIKI_SEARCH_JS:-}" ]] && rendered="${rendered//%%WIKI_SEARCH_CONFIG%%/$WIKI_SEARCH_JS}"
         printf "%s" "$rendered" > "$out_path"
         __log "Rendered -> $out_path" -t success -l wiki
-    }
- 
+    }    
+
 }
